@@ -27,7 +27,7 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid &rid, Context *cont
 
     // 2. 初始化一个指向RmRecord的指针（赋值其内部的data和size）
     char *record_data = page_handle.get_slot(rid.slot_no);
-    return std::make_unique<RmRecord>(record_data, file_hdr_.record_size);
+    return std::make_unique<RmRecord>(file_hdr_.record_size, record_data);
 }
 
 /**
