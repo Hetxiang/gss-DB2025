@@ -1,0 +1,47 @@
+# 构建目录
+build/
+
+# CMake生成的文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+Makefile
+
+# 编译生成的二进制文件
+bin/
+lib/
+*.so
+*.a
+*.o
+*.obj
+*.exe
+
+# IDE配置文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 数据库文件和日志
+*.db
+*.log
+*.dat
+
+# 配置和凭证文件
+.env
+
+# 临时文件
+*.tmp
+*~
