@@ -27,7 +27,14 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid &rid, Context *cont
 
     // 2. 初始化一个指向RmRecord的指针（赋值其内部的data和size）
     char *record_data = page_handle.get_slot(rid.slot_no);
-    return std::make_unique<RmRecord>(file_hdr_.record_size, record_data);
+
+    // 创建RmRecord对象（会复制数据）
+    auto record = std::make_unique<RmRecord>(file_hdr_.record_size, record_data);
+
+    // 3. 释放页面（unpin），因为RmRecord已经复制了数据
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+
+    return record;
 }
 
 /**
@@ -64,6 +71,7 @@ Rid RmFileHandle::insert_record(char *buf, Context *context)
         file_hdr_.first_free_page_no =
             new_rm_page_handle.page_hdr->next_free_page_no;
     }
+    buffer_pool_manager_->unpin_page(new_rm_page_handle.page->get_page_id(), true);
     return {new_rm_page_handle.page->get_page_id().page_no, slot_no};
 }
 
@@ -92,6 +100,7 @@ void RmFileHandle::insert_record(const Rid &rid, char *buf)
                 rm_page_handle.page_hdr->next_free_page_no;
         }
     }
+    buffer_pool_manager_->unpin_page(rm_page_handle.page->get_page_id(), true);
 }
 
 /**
@@ -119,6 +128,7 @@ void RmFileHandle::delete_record(const Rid &rid, Context *context)
     {
         release_page_handle(rm_page_handle);
     }
+    buffer_pool_manager_->unpin_page(rm_page_handle.page->get_page_id(), true);
 }
 
 /**
@@ -141,6 +151,7 @@ void RmFileHandle::update_record(const Rid &rid, char *buf, Context *context)
     RmPageHandle rm_page_handle = fetch_page_handle(rid.page_no);
     memcpy(rm_page_handle.get_slot(rid.slot_no), buf,
            rm_page_handle.file_hdr->record_size);
+    buffer_pool_manager_->unpin_page(rm_page_handle.page->get_page_id(), true);
 }
 
 /**
