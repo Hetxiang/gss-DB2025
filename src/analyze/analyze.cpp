@@ -9,6 +9,7 @@ MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
 #include "analyze.h"
+#include <iostream>
 
 /**
  * @description: 分析器，进行语义分析和查询重写，需要检查不符合语义规定的部分
@@ -231,8 +232,15 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;
         }
-        if (lhs_type != rhs_type)
+        // 检查类型兼容性 - 允许数值类型（INT和FLOAT）之间的比较
+        bool lhs_is_numeric = (lhs_type == TYPE_INT || lhs_type == TYPE_FLOAT);
+        bool rhs_is_numeric = (rhs_type == TYPE_INT || rhs_type == TYPE_FLOAT);
+        bool is_numeric_comparison = lhs_is_numeric && rhs_is_numeric;
+
+        if (lhs_type != rhs_type && !is_numeric_comparison)
         {
+            std::cerr << "Type compatibility error: lhs type = " << coltype2str(lhs_type)
+                      << ", rhs type = " << coltype2str(rhs_type) << std::endl;
             throw IncompatibleTypeError(coltype2str(lhs_type), coltype2str(rhs_type));
         }
     }

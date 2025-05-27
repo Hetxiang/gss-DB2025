@@ -90,11 +90,17 @@ public:
 
     std::unique_ptr<RmRecord> Next() override
     {
+        if (scan_ == nullptr)
+        {
+            beginTuple(); // 自动初始化扫描
+        }
         if (is_end())
         {
             return nullptr;
         }
-        return fh_->get_record(rid_, context_);
+        auto record = fh_->get_record(rid_, context_);
+        nextTuple(); // 移动到下一个记录
+        return record;
     }
 
     size_t tupleLen() const override { return len_; }
