@@ -66,72 +66,51 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         /** TODO: */
         query->tables.push_back(x->tab_name);
 
+        // 检查表是否存在
         if (!sm_manager_->db_.is_table(x->tab_name))
         {
             throw TableNotFoundError(x->tab_name);
         }
 
-        // 2. 获取所有列信息
-        std::vector<ColMeta> all_cols;
-        get_all_cols(query->tables, all_cols);
-
-        // 3. 处理SET子句
-        for (auto &set_clause : x->set_clauses)
+        // 处理需要更新的列和值
+        for (const auto &set_clause : x->set_clauses)
         {
-            SetClause clause;
-            clause.lhs = {.tab_name = x->tab_name, .col_name = set_clause->col_name};
+            SetClause update_clause = {.lhs = {x->tab_name, set_clause->col_name}, .rhs = convert_sv_value(set_clause->val)};
 
-            // 3.1 确认列存在
-            TabCol temp_col = clause.lhs;
-            clause.lhs = check_column(all_cols, temp_col);
-
-            // 3.2 转换要设置的值
-            clause.rhs = convert_sv_value(set_clause->val);
-
-            // 3.3 检查类型兼容性
-            TabMeta &tab = sm_manager_->db_.get_table(clause.lhs.tab_name);
-            auto col = tab.get_col(clause.lhs.col_name);
-
-            // 允许数值类型（INT和FLOAT）之间的转换
-            bool lhs_is_numeric = (col->type == TYPE_INT || col->type == TYPE_FLOAT);
-            bool rhs_is_numeric = (clause.rhs.type == TYPE_INT || clause.rhs.type == TYPE_FLOAT);
-            bool is_numeric_conversion = lhs_is_numeric && rhs_is_numeric;
-
-            if (clause.rhs.type != col->type && !is_numeric_conversion)
+            // 类型转换
+            TabMeta &tab = sm_manager_->db_.get_table(x->tab_name);
+            auto col = tab.get_col(set_clause->col_name);
+            if (col->type != update_clause.rhs.type)
             {
-                throw IncompatibleTypeError(coltype2str(col->type), coltype2str(clause.rhs.type));
-            }
-
-            // 如果需要类型转换，进行转换
-            if (clause.rhs.type != col->type && is_numeric_conversion)
-            {
-                if (col->type == TYPE_FLOAT && clause.rhs.type == TYPE_INT)
+                if (!can_cast_type(update_clause.rhs.type, col->type))
                 {
-                    // INT -> FLOAT
-                    clause.rhs.set_float((float)clause.rhs.int_val);
+                    throw IncompatibleTypeError(coltype2str(update_clause.rhs.type), coltype2str(col->type));
                 }
-                else if (col->type == TYPE_INT && clause.rhs.type == TYPE_FLOAT)
+                else
                 {
-                    // FLOAT -> INT (截断)
-                    clause.rhs.set_int((int)clause.rhs.float_val);
+                    cast_value(update_clause.rhs, col->type);
                 }
             }
 
-            // 3.4 初始化原始值缓冲区
-            clause.rhs.init_raw(col->len);
-
-            query->set_clauses.push_back(clause);
+            query->set_clauses.push_back(update_clause);
         }
 
-        // 4. 处理WHERE条件
+        // 处理where条件
         get_clause(x->conds, query->conds);
-        check_clause({x->tab_name}, query->conds);
+        check_clause(query->tables, query->conds);
     }
     else if (auto x = std::dynamic_pointer_cast<ast::DeleteStmt>(parse))
     {
+        query->tables.push_back(x->tab_name);
+
+        if (!sm_manager_->db_.is_table(x->tab_name))
+        {
+            throw TableNotFoundError(x->tab_name);
+        }
+
         // 处理where条件
         get_clause(x->conds, query->conds);
-        check_clause({x->tab_name}, query->conds);
+        check_clause(query->tables, query->conds);
     }
     else if (auto x = std::dynamic_pointer_cast<ast::InsertStmt>(parse))
     {
@@ -253,12 +232,8 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;
         }
-        // 检查类型兼容性 - 允许数值类型（INT和FLOAT）之间的比较
-        bool lhs_is_numeric = (lhs_type == TYPE_INT || lhs_type == TYPE_FLOAT);
-        bool rhs_is_numeric = (rhs_type == TYPE_INT || rhs_type == TYPE_FLOAT);
-        bool is_numeric_comparison = lhs_is_numeric && rhs_is_numeric;
-
-        if (lhs_type != rhs_type && !is_numeric_comparison)
+        // 检查类型兼容性 - 使用can_cast_type函数
+        if (lhs_type != rhs_type && !can_cast_type(rhs_type, lhs_type) && !can_cast_type(lhs_type, rhs_type))
         {
             std::cerr << "Type compatibility error: lhs type = " << coltype2str(lhs_type)
                       << ", rhs type = " << coltype2str(rhs_type) << std::endl;
@@ -300,4 +275,35 @@ CompOp Analyze::convert_sv_comp_op(ast::SvCompOp op)
         {ast::SV_OP_GE, OP_GE},
     };
     return m.at(op);
+}
+
+bool Analyze::can_cast_type(ColType from, ColType to)
+{
+    // Add logic to determine if a type can be cast to another type
+    if (from == to)
+        return true;
+    if (from == TYPE_INT && to == TYPE_FLOAT)
+        return true;
+    if (from == TYPE_FLOAT && to == TYPE_INT)
+        return true;
+    return false;
+}
+
+void Analyze::cast_value(Value &val, ColType to)
+{
+    // Add logic to cast val to the target type
+    if (val.type == TYPE_INT && to == TYPE_FLOAT)
+    {
+        int int_val = val.int_val;
+        val.type = TYPE_FLOAT;
+        val.float_val = static_cast<float>(int_val);
+    }
+    else if (val.type == TYPE_FLOAT && to == TYPE_INT)
+    {
+        // do not things
+    }
+    else
+    {
+        throw IncompatibleTypeError(coltype2str(val.type), coltype2str(to));
+    }
 }
