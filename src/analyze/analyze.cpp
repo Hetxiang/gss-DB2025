@@ -91,9 +91,30 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             // 3.3 检查类型兼容性
             TabMeta &tab = sm_manager_->db_.get_table(clause.lhs.tab_name);
             auto col = tab.get_col(clause.lhs.col_name);
-            if (clause.rhs.type != col->type)
+
+            // 允许数值类型（INT和FLOAT）之间的转换
+            bool lhs_is_numeric = (col->type == TYPE_INT || col->type == TYPE_FLOAT);
+            bool rhs_is_numeric = (clause.rhs.type == TYPE_INT || clause.rhs.type == TYPE_FLOAT);
+            bool is_numeric_conversion = lhs_is_numeric && rhs_is_numeric;
+
+            if (clause.rhs.type != col->type && !is_numeric_conversion)
             {
                 throw IncompatibleTypeError(coltype2str(col->type), coltype2str(clause.rhs.type));
+            }
+
+            // 如果需要类型转换，进行转换
+            if (clause.rhs.type != col->type && is_numeric_conversion)
+            {
+                if (col->type == TYPE_FLOAT && clause.rhs.type == TYPE_INT)
+                {
+                    // INT -> FLOAT
+                    clause.rhs.set_float((float)clause.rhs.int_val);
+                }
+                else if (col->type == TYPE_INT && clause.rhs.type == TYPE_FLOAT)
+                {
+                    // FLOAT -> INT (截断)
+                    clause.rhs.set_int((int)clause.rhs.float_val);
+                }
             }
 
             // 3.4 初始化原始值缓冲区

@@ -127,34 +127,13 @@ public:
         // 步骤3: 将记录插入到数据文件中，获取记录的物理位置标识符
         rid_ = fh_->insert_record(rec.data, context_);
 
-        // 调试输出：记录插入成功
-        std::fstream debug_file;
-        debug_file.open("output.txt", std::ios::out | std::ios::app);
-        debug_file << "DEBUG: Record inserted successfully into table " << tab_name_
-                   << " at RID(" << rid_.page_no << "," << rid_.slot_no << ")" << std::endl;
-        debug_file.close();
-
         // 步骤4: 维护表上的所有索引
         if (!insert_index(rec))
         {
-            // 调试输出：索引插入失败，开始回滚
-            std::fstream debug_file2;
-            debug_file2.open("output.txt", std::ios::out | std::ios::app);
-            debug_file2 << "DEBUG: Index insertion failed for table " << tab_name_
-                        << ", rolling back record at RID(" << rid_.page_no << "," << rid_.slot_no << ")" << std::endl;
-            debug_file2.close();
-
             fh_->delete_record(rid_, context_);
             throw RMDBError("Failed to insert into index, rolled back record insertion at " + getType());
         }
 
-        // 调试输出：INSERT操作完全成功
-        std::fstream debug_file3;
-        debug_file3.open("output.txt", std::ios::out | std::ios::app);
-        debug_file3 << "DEBUG: INSERT operation completed successfully for table " << tab_name_ << std::endl;
-        debug_file3.close();
-
-        // INSERT操作不需要返回记录数据
         return nullptr;
     }
 

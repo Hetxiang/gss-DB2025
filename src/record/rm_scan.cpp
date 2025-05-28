@@ -37,12 +37,15 @@ void RmScan::next()
         int max_n = file_handle_->file_hdr_.num_records_per_page;
         int slot_no =
             Bitmap::next_bit(true, rm_page_handle.bitmap, max_n, rid_.slot_no);
+        file_handle_->buffer_pool_manager_->unpin_page(rm_page_handle.page->get_page_id(), false);
         if (slot_no < max_n)
         {
-            rid_ = {page_no, slot_no};
+            // 找到有效记录，更新rid_并返回
+            rid_.page_no = page_no;
+            rid_.slot_no = slot_no;
             return;
         }
-        rid_.slot_no = RM_NO_PAGE;
+        rid_.slot_no = -1; // 重置为-1，这样下一页会从第0个slot开始搜索
     }
     rid_.page_no = RM_NO_PAGE;
 }

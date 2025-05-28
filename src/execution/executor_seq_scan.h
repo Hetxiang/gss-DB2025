@@ -99,7 +99,6 @@ public:
             return nullptr;
         }
         auto record = fh_->get_record(rid_, context_);
-        nextTuple(); // 移动到下一个记录
         return record;
     }
 

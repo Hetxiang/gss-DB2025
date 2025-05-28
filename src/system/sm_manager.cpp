@@ -254,7 +254,6 @@ void SmManager::create_table(const std::string &tab_name, const std::vector<ColD
  * @description: 删除表
  * @param {string&} tab_name 表的名称
  * @param {Context*} context
- * 可能会出现问题
  */
 void SmManager::drop_table(const std::string &tab_name, Context *context)
 {
