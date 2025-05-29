@@ -154,12 +154,6 @@ public:
      */
     bool insert_index(RmRecord &rec)
     {
-        // 调试输出：开始索引维护
-        std::fstream debug_file;
-        debug_file.open("output.txt", std::ios::out | std::ios::app);
-        debug_file << "DEBUG: Starting index maintenance for " << tab_.indexes.size() << " indexes" << std::endl;
-        debug_file.close();
-
         // 用于记录已成功插入的索引键值，以便失败时回滚
         std::vector<std::unique_ptr<char[]>> inserted_keys;
         inserted_keys.reserve(tab_.indexes.size()); // 预分配空间以提高性能
@@ -187,21 +181,9 @@ public:
             // 将键值和记录位置插入到索引中
             auto res = ih->insert_entry(key.get(), rid_, context_->txn_);
 
-            // 调试输出：索引插入结果
-            std::fstream debug_file;
-            debug_file.open("output.txt", std::ios::out | std::ios::app);
-            debug_file << "DEBUG: Index " << i << " insertion result: " << (res != INVALID_PAGE_ID ? "SUCCESS" : "FAILED") << std::endl;
-            debug_file.close();
-
             // 检查索引插入是否成功
             if (res == INVALID_PAGE_ID)
             {
-                // 调试输出：索引插入失败，开始回滚
-                std::fstream debug_file2;
-                debug_file2.open("output.txt", std::ios::out | std::ios::app);
-                debug_file2 << "DEBUG: Index insertion failed at index " << i << ", rolling back " << i << " previous indexes" << std::endl;
-                debug_file2.close();
-
                 // 索引插入失败，需要回滚所有已成功插入的索引
                 for (size_t rollback_i = 0; rollback_i < i; ++rollback_i)
                 {
