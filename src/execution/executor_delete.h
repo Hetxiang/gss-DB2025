@@ -68,12 +68,12 @@ public:
         {
             auto rec = fh_->get_record(rid, context_);
             // 实际删除
-            delete_index(rec.get(), rid);
+            // delete_index(rec.get(), rid);
             fh_->delete_record(rid, context_);
             // 更新事务
-            auto *wr =
-                new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *rec);
-            context_->txn_->append_write_record(wr);
+            // auto *wr =
+            //     new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *rec);
+            // context_->txn_->append_write_record(wr);
         }
         return nullptr;
     }
