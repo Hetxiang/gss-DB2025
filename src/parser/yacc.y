@@ -22,7 +22,7 @@ using namespace ast;
 
 // keywords
 %token SHOW TABLES CREATE TABLE DROP DESC INSERT INTO VALUES DELETE FROM ASC ORDER BY
-WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE
+WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN AS EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
 
@@ -42,9 +42,11 @@ WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_CO
 %type <sv_val> value
 %type <sv_vals> valueList
 %type <sv_str> tbName colName
-%type <sv_strs> tableList colNameList
+%type <sv_strs> colNameList
 %type <sv_col> col
 %type <sv_cols> colList selector
+%type <sv_table_ref> tableRef
+%type <sv_table_refs> tableList
 %type <sv_set_clause> setClause
 %type <sv_set_clauses> setClauses
 %type <sv_cond> condition
@@ -265,9 +267,17 @@ col:
     {
         $$ = std::make_shared<Col>($1, $3);
     }
+    |   tbName '.' colName AS IDENTIFIER
+    {
+        $$ = std::make_shared<Col>($1, $3, $5);
+    }
     |   colName
     {
         $$ = std::make_shared<Col>("", $1);
+    }
+    |   colName AS IDENTIFIER
+    {
+        $$ = std::make_shared<Col>("", $1, $3);
     }
     ;
 
@@ -346,16 +356,31 @@ selector:
     |   colList
     ;
 
-tableList:
+tableRef:
         tbName
     {
-        $$ = std::vector<std::string>{$1};
+        $$ = std::make_shared<TableRef>($1);
     }
-    |   tableList ',' tbName
+    |   tbName AS IDENTIFIER
+    {
+        $$ = std::make_shared<TableRef>($1, $3);
+    }
+    |   tbName IDENTIFIER
+    {
+        $$ = std::make_shared<TableRef>($1, $2);
+    }
+    ;
+
+tableList:
+        tableRef
+    {
+        $$ = std::vector<std::shared_ptr<TableRef>>{$1};
+    }
+    |   tableList ',' tableRef
     {
         $$.push_back($3);
     }
-    |   tableList JOIN tbName
+    |   tableList JOIN tableRef
     {
         $$.push_back($3);
     }

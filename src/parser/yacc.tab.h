@@ -78,24 +78,25 @@ extern int yydebug;
     INDEX = 279,                   /* INDEX  */
     AND = 280,                     /* AND  */
     JOIN = 281,                    /* JOIN  */
-    EXIT = 282,                    /* EXIT  */
-    HELP = 283,                    /* HELP  */
-    TXN_BEGIN = 284,               /* TXN_BEGIN  */
-    TXN_COMMIT = 285,              /* TXN_COMMIT  */
-    TXN_ABORT = 286,               /* TXN_ABORT  */
-    TXN_ROLLBACK = 287,            /* TXN_ROLLBACK  */
-    ORDER_BY = 288,                /* ORDER_BY  */
-    ENABLE_NESTLOOP = 289,         /* ENABLE_NESTLOOP  */
-    ENABLE_SORTMERGE = 290,        /* ENABLE_SORTMERGE  */
-    LEQ = 291,                     /* LEQ  */
-    NEQ = 292,                     /* NEQ  */
-    GEQ = 293,                     /* GEQ  */
-    T_EOF = 294,                   /* T_EOF  */
-    IDENTIFIER = 295,              /* IDENTIFIER  */
-    VALUE_STRING = 296,            /* VALUE_STRING  */
-    VALUE_INT = 297,               /* VALUE_INT  */
-    VALUE_FLOAT = 298,             /* VALUE_FLOAT  */
-    VALUE_BOOL = 299               /* VALUE_BOOL  */
+    AS = 282,                      /* AS  */
+    EXIT = 283,                    /* EXIT  */
+    HELP = 284,                    /* HELP  */
+    TXN_BEGIN = 285,               /* TXN_BEGIN  */
+    TXN_COMMIT = 286,              /* TXN_COMMIT  */
+    TXN_ABORT = 287,               /* TXN_ABORT  */
+    TXN_ROLLBACK = 288,            /* TXN_ROLLBACK  */
+    ORDER_BY = 289,                /* ORDER_BY  */
+    ENABLE_NESTLOOP = 290,         /* ENABLE_NESTLOOP  */
+    ENABLE_SORTMERGE = 291,        /* ENABLE_SORTMERGE  */
+    LEQ = 292,                     /* LEQ  */
+    NEQ = 293,                     /* NEQ  */
+    GEQ = 294,                     /* GEQ  */
+    T_EOF = 295,                   /* T_EOF  */
+    IDENTIFIER = 296,              /* IDENTIFIER  */
+    VALUE_STRING = 297,            /* VALUE_STRING  */
+    VALUE_INT = 298,               /* VALUE_INT  */
+    VALUE_FLOAT = 299,             /* VALUE_FLOAT  */
+    VALUE_BOOL = 300               /* VALUE_BOOL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif

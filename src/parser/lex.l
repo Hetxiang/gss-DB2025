@@ -80,6 +80,7 @@ single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."
 "INDEX" { return INDEX; }
 "AND" { return AND; }
 "JOIN" {return JOIN;}
+"AS" { return AS; }
 "EXIT" { return EXIT; }
 "HELP" { return HELP; }
 "ORDER" { return ORDER; }
