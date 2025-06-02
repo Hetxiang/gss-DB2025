@@ -676,6 +676,11 @@ namespace ast
         std::shared_ptr<TableRef> sv_table_ref;               // 单个表引用
         std::vector<std::shared_ptr<TableRef>> sv_table_refs; // 表引用列表
 
+        // ===== JOIN相关 =====
+        std::shared_ptr<JoinExpr> sv_join_expr;               // 单个JOIN表达式
+        std::vector<std::shared_ptr<JoinExpr>> sv_join_exprs; // JOIN表达式列表
+        JoinType sv_join_type;                                // JOIN类型
+
         // ===== ORDER BY相关 =====
         std::shared_ptr<OrderBy> sv_orderby; // ORDER BY子句
 
