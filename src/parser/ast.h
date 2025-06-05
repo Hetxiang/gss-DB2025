@@ -41,6 +41,8 @@ enum JoinType
 
 namespace ast
 {
+    // 前向声明
+    struct TableRef;
 
     /**
      * @brief 数据类型枚举
@@ -508,12 +510,21 @@ namespace ast
     struct JoinExpr : public TreeNode
     {
         std::string left;                               // 左表名
-        std::string right;                              // 右表名
+        std::shared_ptr<TableRef> right_ref;            // 右表引用（包含别名）
         std::vector<std::shared_ptr<BinaryExpr>> conds; // 连接条件列表
         JoinType type;                                  // 连接类型
 
+        JoinExpr(std::string left_, std::shared_ptr<TableRef> right_ref_,
+                 std::vector<std::shared_ptr<BinaryExpr>> conds_, JoinType type_)
+            : left(std::move(left_)), right_ref(std::move(right_ref_)), conds(std::move(conds_)), type(type_) {}
+
+        // 保持向后兼容的构造函数
         JoinExpr(std::string left_, std::string right_,
-                 std::vector<std::shared_ptr<BinaryExpr>> conds_, JoinType type_) : left(std::move(left_)), right(std::move(right_)), conds(std::move(conds_)), type(type_) {}
+                 std::vector<std::shared_ptr<BinaryExpr>> conds_, JoinType type_)
+            : left(std::move(left_)), conds(std::move(conds_)), type(type_)
+        {
+            right_ref = std::make_shared<TableRef>(right_);
+        }
     };
 
     /**

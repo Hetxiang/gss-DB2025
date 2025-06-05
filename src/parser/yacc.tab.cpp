@@ -2218,7 +2218,7 @@ yyreduce:
         // 这里需要获取左表名，暂时使用空字符串
         (yyval.sv_join_expr) = std::make_shared<JoinExpr>(
             "",           // 左表名，在语义分析阶段确定
-            (yyvsp[-2].sv_table_ref)->tab_name, // 右表名
+            (yyvsp[-2].sv_table_ref),           // 右表引用（包含别名）
             std::vector<std::shared_ptr<BinaryExpr>>{(yyvsp[0].sv_cond)}, // 连接条件
             (yyvsp[-4].sv_join_type)            // JOIN类型
         );
@@ -2232,7 +2232,7 @@ yyreduce:
         // 默认为INNER JOIN
         (yyval.sv_join_expr) = std::make_shared<JoinExpr>(
             "",           // 左表名，在语义分析阶段确定
-            (yyvsp[-2].sv_table_ref)->tab_name, // 右表名
+            (yyvsp[-2].sv_table_ref),           // 右表引用（包含别名）
             std::vector<std::shared_ptr<BinaryExpr>>{(yyvsp[0].sv_cond)}, // 连接条件
             INNER_JOIN    // 默认为内连接
         );

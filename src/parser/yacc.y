@@ -469,7 +469,7 @@ joinExpr:
         // 这里需要获取左表名，暂时使用空字符串
         $$ = std::make_shared<JoinExpr>(
             "",           // 左表名，在语义分析阶段确定
-            $3->tab_name, // 右表名
+            $3,           // 右表引用（包含别名）
             std::vector<std::shared_ptr<BinaryExpr>>{$5}, // 连接条件
             $1            // JOIN类型
         );
@@ -479,7 +479,7 @@ joinExpr:
         // 默认为INNER JOIN
         $$ = std::make_shared<JoinExpr>(
             "",           // 左表名，在语义分析阶段确定
-            $2->tab_name, // 右表名
+            $2,           // 右表引用（包含别名）
             std::vector<std::shared_ptr<BinaryExpr>>{$4}, // 连接条件
             INNER_JOIN    // 默认为内连接
         );

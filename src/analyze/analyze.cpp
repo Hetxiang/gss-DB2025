@@ -24,6 +24,17 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         // 处理表名和别名 - 使用新的table_refs结构
         query->tables = x->get_table_names();
 
+        // 从JOIN表达式中添加额外的表名
+        for (const auto &join_expr : x->jointree)
+        {
+            // 添加JOIN右表
+            std::string right_table = join_expr->right_ref->tab_name;
+            if (std::find(query->tables.begin(), query->tables.end(), right_table) == query->tables.end())
+            {
+                query->tables.push_back(right_table);
+            }
+        }
+
         // 创建别名到实际表名的映射
         std::map<std::string, std::string> alias_map;
         for (const auto &table_ref : x->table_refs)
@@ -41,6 +52,25 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             }
             // 表名也映射到自己，支持完整表名引用
             alias_map[table_ref->tab_name] = table_ref->tab_name;
+        }
+
+        // 为JOIN表也建立别名映射（从语法解析器输出中提取）
+        for (const auto &join_expr : x->jointree)
+        {
+            auto right_ref = join_expr->right_ref;
+            // 检查JOIN右表是否存在
+            if (!sm_manager_->db_.is_table(right_ref->tab_name))
+            {
+                throw TableNotFoundError(right_ref->tab_name);
+            }
+
+            // JOIN右表的别名映射
+            if (!right_ref->alias.empty())
+            {
+                alias_map[right_ref->alias] = right_ref->tab_name;
+            }
+            // JOIN右表的表名映射
+            alias_map[right_ref->tab_name] = right_ref->tab_name;
         }
         // 处理target list，再target list中添加上表名，例如 a.id
         for (auto &sv_sel_col : x->cols)
@@ -71,6 +101,17 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         // 处理where条件
         get_clause(x->conds, query->conds);
         check_clause_with_alias(query->tables, query->conds, alias_map);
+
+        // 处理JOIN ON条件
+        for (const auto &join_expr : x->jointree)
+        {
+            std::vector<Condition> join_conds;
+            get_clause(join_expr->conds, join_conds);
+            check_clause_with_alias(query->tables, join_conds, alias_map);
+
+            // 将JOIN ON条件添加到查询条件中
+            query->conds.insert(query->conds.end(), join_conds.begin(), join_conds.end());
+        }
     }
     else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse))
     {
