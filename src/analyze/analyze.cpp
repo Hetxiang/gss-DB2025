@@ -48,9 +48,20 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             // 建立别名映射
             if (!table_ref->alias.empty())
             {
+                // 检查别名是否已经存在
+                if (alias_map.find(table_ref->alias) != alias_map.end())
+                {
+                    throw DuplicateAliasError(table_ref->alias);
+                }
                 alias_map[table_ref->alias] = table_ref->tab_name;
             }
             // 表名也映射到自己，支持完整表名引用
+            // 但需要检查表名是否与已有别名冲突
+            if (alias_map.find(table_ref->tab_name) != alias_map.end() &&
+                alias_map[table_ref->tab_name] != table_ref->tab_name)
+            {
+                throw DuplicateAliasError(table_ref->tab_name);
+            }
             alias_map[table_ref->tab_name] = table_ref->tab_name;
         }
 
@@ -67,9 +78,20 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             // JOIN右表的别名映射
             if (!right_ref->alias.empty())
             {
+                // 检查别名是否已经存在
+                if (alias_map.find(right_ref->alias) != alias_map.end())
+                {
+                    throw DuplicateAliasError(right_ref->alias);
+                }
                 alias_map[right_ref->alias] = right_ref->tab_name;
             }
             // JOIN右表的表名映射
+            // 检查表名是否与已有别名冲突
+            if (alias_map.find(right_ref->tab_name) != alias_map.end() &&
+                alias_map[right_ref->tab_name] != right_ref->tab_name)
+            {
+                throw DuplicateAliasError(right_ref->tab_name);
+            }
             alias_map[right_ref->tab_name] = right_ref->tab_name;
         }
         // 处理target list，再target list中添加上表名，例如 a.id
