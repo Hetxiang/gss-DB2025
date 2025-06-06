@@ -235,7 +235,7 @@ std::pair<IxNodeHandle*, bool> IxIndexHandle::find_leaf_page(const char* key, Op
 
     auto cur = fetch_node(file_hdr_->root_page_);
     while (!cur->is_leaf_page()) {
-        buffer_pool_manager_->unpin_page(cur->get_page_id(), false);  // unpin 
+        buffer_pool_manager_->unpin_page(cur->get_page_id(), false);  // unpin
         cur = fetch_node(cur->internal_lookup(key));
     }
 
@@ -264,9 +264,9 @@ bool IxIndexHandle::get_value(const char* key, std::vector<Rid>* result, Transac
     }
     Rid* value = nullptr;
     if (leaf_node->leaf_lookup(key, &value)) {
-        result->push_back(*value);  // 如果找到了对应的值，将其添加到结果中
+        result->push_back(*value);                                          // 如果找到了对应的值，将其添加到结果中
         buffer_pool_manager_->unpin_page(leaf_node->get_page_id(), false);  // unpin leaf node
-        return true;  // 返回true表示找到了目标键值对
+        return true;                                                        // 返回true表示找到了目标键值对
     }
 
     return false;
@@ -286,8 +286,6 @@ IxNodeHandle* IxIndexHandle::split(IxNodeHandle* node) {
     // 2. 如果新的右兄弟结点是叶子结点，更新新旧节点的prev_leaf和next_leaf指针
     //    为新节点分配键值对，更新旧节点的键值对数记录
     // 3. 如果新的右兄弟结点不是叶子结点，更新该结点的所有孩子结点的父节点信息(使用IxIndexHandle::maintain_child())
-
-    
 
     return nullptr;
 }
