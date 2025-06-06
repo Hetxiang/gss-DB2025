@@ -21,15 +21,78 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
     std::shared_ptr<Query> query = std::make_shared<Query>();
     if (auto x = std::dynamic_pointer_cast<ast::SelectStmt>(parse))
     {
-        // 处理表名
-        query->tables = std::move(x->tabs);
-        /** TODO: 检查表是否存在 */
-        for (const auto &tab_name : query->tables)
+        // 处理表名和别名 - 使用新的table_refs结构
+        query->tables = x->get_table_names();
+
+        // 从JOIN表达式中添加额外的表名
+        for (const auto &join_expr : x->jointree)
         {
-            if (!sm_manager_->db_.is_table(tab_name))
+            // 添加JOIN右表
+            std::string right_table = join_expr->right_ref->tab_name;
+            if (std::find(query->tables.begin(), query->tables.end(), right_table) == query->tables.end())
             {
-                throw TableNotFoundError(tab_name);
+                query->tables.push_back(right_table);
             }
+        }
+
+        // 创建别名到实际表名的映射
+        std::map<std::string, std::string> alias_map;
+        for (const auto &table_ref : x->table_refs)
+        {
+            // 检查表是否存在
+            if (!sm_manager_->db_.is_table(table_ref->tab_name))
+            {
+                throw TableNotFoundError(table_ref->tab_name);
+            }
+
+            // 建立别名映射
+            if (!table_ref->alias.empty())
+            {
+                // 检查别名是否已经存在
+                if (alias_map.find(table_ref->alias) != alias_map.end())
+                {
+                    throw DuplicateAliasError(table_ref->alias);
+                }
+                alias_map[table_ref->alias] = table_ref->tab_name;
+            }
+            // 表名也映射到自己，支持完整表名引用
+            // 但需要检查表名是否与已有别名冲突
+            if (alias_map.find(table_ref->tab_name) != alias_map.end() &&
+                alias_map[table_ref->tab_name] != table_ref->tab_name)
+            {
+                throw DuplicateAliasError(table_ref->tab_name);
+            }
+            alias_map[table_ref->tab_name] = table_ref->tab_name;
+        }
+
+        // 为JOIN表也建立别名映射（从语法解析器输出中提取）
+        for (const auto &join_expr : x->jointree)
+        {
+            auto right_ref = join_expr->right_ref;
+            // 检查JOIN右表是否存在
+            if (!sm_manager_->db_.is_table(right_ref->tab_name))
+            {
+                throw TableNotFoundError(right_ref->tab_name);
+            }
+
+            // JOIN右表的别名映射
+            if (!right_ref->alias.empty())
+            {
+                // 检查别名是否已经存在
+                if (alias_map.find(right_ref->alias) != alias_map.end())
+                {
+                    throw DuplicateAliasError(right_ref->alias);
+                }
+                alias_map[right_ref->alias] = right_ref->tab_name;
+            }
+            // JOIN右表的表名映射
+            // 检查表名是否与已有别名冲突
+            if (alias_map.find(right_ref->tab_name) != alias_map.end() &&
+                alias_map[right_ref->tab_name] != right_ref->tab_name)
+            {
+                throw DuplicateAliasError(right_ref->tab_name);
+            }
+            alias_map[right_ref->tab_name] = right_ref->tab_name;
         }
         // 处理target list，再target list中添加上表名，例如 a.id
         for (auto &sv_sel_col : x->cols)
@@ -51,15 +114,26 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         }
         else
         {
-            // infer table name from column name
+            // infer table name from column name, 考虑别名
             for (auto &sel_col : query->cols)
             {
-                sel_col = check_column(all_cols, sel_col); // 列元数据校验
+                sel_col = check_column_with_alias(all_cols, sel_col, alias_map); // 列元数据校验（支持别名）
             }
         }
         // 处理where条件
         get_clause(x->conds, query->conds);
-        check_clause(query->tables, query->conds);
+        check_clause_with_alias(query->tables, query->conds, alias_map);
+
+        // 处理JOIN ON条件
+        for (const auto &join_expr : x->jointree)
+        {
+            std::vector<Condition> join_conds;
+            get_clause(join_expr->conds, join_conds);
+            check_clause_with_alias(query->tables, join_conds, alias_map);
+
+            // 将JOIN ON条件添加到查询条件中
+            query->conds.insert(query->conds.end(), join_conds.begin(), join_conds.end());
+        }
     }
     else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse))
     {
@@ -171,6 +245,61 @@ TabCol Analyze::check_column(const std::vector<ColMeta> &all_cols, TabCol target
     return target;
 }
 
+// 支持别名的列检查函数
+TabCol Analyze::check_column_with_alias(const std::vector<ColMeta> &all_cols, TabCol target, const std::map<std::string, std::string> &alias_map)
+{
+    if (target.tab_name.empty())
+    {
+        // Table name not specified, infer table name from column name
+        std::string tab_name;
+        for (auto &col : all_cols)
+        {
+            if (col.name == target.col_name)
+            {
+                if (!tab_name.empty())
+                {
+                    throw AmbiguousColumnError(target.col_name);
+                }
+                tab_name = col.tab_name;
+            }
+        }
+        if (tab_name.empty())
+        {
+            throw ColumnNotFoundError(target.col_name);
+        }
+        target.tab_name = tab_name;
+    }
+    else
+    {
+        // 检查是否使用了别名，如果是则转换为实际表名
+        std::string actual_tab_name = target.tab_name;
+        auto alias_it = alias_map.find(target.tab_name);
+        if (alias_it != alias_map.end())
+        {
+            actual_tab_name = alias_it->second;
+        }
+
+        // 使用实际表名检查列是否存在
+        bool found = false;
+        for (auto &col : all_cols)
+        {
+            if (col.tab_name == actual_tab_name && col.name == target.col_name)
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            throw ColumnNotFoundError(target.tab_name + "." + target.col_name);
+        }
+
+        // 返回的target仍然使用实际表名，这样后续处理就不需要再考虑别名
+        target.tab_name = actual_tab_name;
+    }
+    return target;
+}
+
 void Analyze::get_all_cols(const std::vector<std::string> &tab_names, std::vector<ColMeta> &all_cols)
 {
     for (auto &sel_tab_name : tab_names)
@@ -238,6 +367,56 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             std::cerr << "Type compatibility error: lhs type = " << coltype2str(lhs_type)
                       << ", rhs type = " << coltype2str(rhs_type) << std::endl;
             throw IncompatibleTypeError(coltype2str(lhs_type), coltype2str(rhs_type));
+        }
+    }
+}
+
+// 支持别名的条件检查函数
+void Analyze::check_clause_with_alias(const std::vector<std::string> &tab_names, std::vector<Condition> &conds, const std::map<std::string, std::string> &alias_map)
+{
+    std::vector<ColMeta> all_cols;
+    get_all_cols(tab_names, all_cols);
+    // Get raw values in where clause
+    for (auto &cond : conds)
+    {
+        // Infer table name from column name, 考虑别名
+        cond.lhs_col = check_column_with_alias(all_cols, cond.lhs_col, alias_map);
+        if (!cond.is_rhs_val)
+        {
+            cond.rhs_col = check_column_with_alias(all_cols, cond.rhs_col, alias_map);
+        }
+        TabMeta &lhs_tab = sm_manager_->db_.get_table(cond.lhs_col.tab_name);
+        auto lhs_col = lhs_tab.get_col(cond.lhs_col.col_name);
+        ColType lhs_type = lhs_col->type;
+        ColType rhs_type;
+        if (cond.is_rhs_val)
+        {
+            cond.rhs_val.init_raw(lhs_col->len);
+            rhs_type = cond.rhs_val.type;
+        }
+        else
+        {
+            TabMeta &rhs_tab = sm_manager_->db_.get_table(cond.rhs_col.tab_name);
+            auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
+            rhs_type = rhs_col->type;
+        }
+        if (lhs_type != rhs_type)
+        {
+            if (cond.is_rhs_val)
+            {
+                if (can_cast_type(rhs_type, lhs_type))
+                {
+                    cast_value(cond.rhs_val, lhs_type);
+                }
+                else
+                {
+                    throw IncompatibleTypeError(coltype2str(lhs_type), coltype2str(rhs_type));
+                }
+            }
+            else
+            {
+                throw IncompatibleTypeError(coltype2str(lhs_type), coltype2str(rhs_type));
+            }
         }
     }
 }

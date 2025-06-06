@@ -165,7 +165,8 @@ int IxNodeHandle::insert(const char* key, const Rid& value) {
  *
  * @param pos 要删除键值对的位置
  */
-void IxNodeHandle::erase_pair(int pos) {
+void IxNodeHandle::erase_pair(int pos)
+{
     // Todo:
     // 1. 删除该位置的key
     // 2. 删除该位置的rid
@@ -212,6 +213,7 @@ IxIndexHandle::IxIndexHandle(DiskManager* disk_manager, BufferPoolManager* buffe
     disk_manager_->read_page(fd, IX_FILE_HDR_PAGE, buf, PAGE_SIZE);
     file_hdr_ = new IxFileHdr();
     file_hdr_->deserialize(buf);
+
 
     // disk_manager管理的fd对应的文件中，设置从file_hdr_->num_pages开始分配page_no
     int now_page_no = disk_manager_->get_fd2pageno(fd);
@@ -443,7 +445,7 @@ Rid IxIndexHandle::get_rid(const Iid& iid) const {
     if (iid.slot_no >= node->get_size()) {
         throw IndexEntryNotFoundError();
     }
-    buffer_pool_manager_->unpin_page(node->get_page_id(), false);  // unpin it!
+    buffer_pool_manager_->unpin_page(node->get_page_id(), false); // unpin it!
     return *node->get_rid(iid.slot_no);
 }
 
@@ -478,7 +480,7 @@ Iid IxIndexHandle::upper_bound(const char* key) {
 Iid IxIndexHandle::leaf_end() const {
     IxNodeHandle* node = fetch_node(file_hdr_->last_leaf_);
     Iid iid = {.page_no = file_hdr_->last_leaf_, .slot_no = node->get_size()};
-    buffer_pool_manager_->unpin_page(node->get_page_id(), false);  // unpin it!
+    buffer_pool_manager_->unpin_page(node->get_page_id(), false); // unpin it!
     return iid;
 }
 
@@ -488,7 +490,8 @@ Iid IxIndexHandle::leaf_end() const {
  *
  * @return Iid
  */
-Iid IxIndexHandle::leaf_begin() const {
+Iid IxIndexHandle::leaf_begin() const
+{
     Iid iid = {.page_no = file_hdr_->first_leaf_, .slot_no = 0};
     return iid;
 }
@@ -545,7 +548,7 @@ void IxIndexHandle::maintain_parent(IxNodeHandle* node) {
             assert(buffer_pool_manager_->unpin_page(parent->get_page_id(), true));
             break;
         }
-        memcpy(parent_key, child_first_key, file_hdr_->col_tot_len_);  // 修改了parent node
+        memcpy(parent_key, child_first_key, file_hdr_->col_tot_len_); // 修改了parent node
         curr = parent;
 
         assert(buffer_pool_manager_->unpin_page(parent->get_page_id(), true));
