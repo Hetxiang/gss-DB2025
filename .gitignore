@@ -45,3 +45,6 @@ Thumbs.db
 # 临时文件
 *.tmp
 *~
+
+.clang-format
+test_db/
