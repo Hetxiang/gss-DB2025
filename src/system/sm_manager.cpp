@@ -284,12 +284,7 @@ void SmManager::drop_table(const std::string &tab_name, Context *context) {
     }
     TabMeta &tab = db_.get_table(tab_name);
 
-    if (fhs_.count(tab_name) > 0) {
-        rm_manager_->close_file(fhs_[tab_name].get());
-        fhs_.erase(tab_name);
-    }
-    rm_manager_->destroy_file(tab_name);
-
+    // 首先关闭并清理所有索引
     for (auto &index : tab.indexes) {
         std::string ix_name = get_ix_manager()->get_index_name(tab_name, index.cols);
         if (ihs_.count(ix_name) > 0) {
@@ -297,9 +292,19 @@ void SmManager::drop_table(const std::string &tab_name, Context *context) {
             ix_manager_->close_index(ih_.get());
             ihs_.erase(ix_name);
         }
+        // 确保索引文件被完全删除
         ix_manager_->destroy_index(tab_name, index.cols);
     }
     tab.indexes.clear();
+
+    // 然后关闭并删除表文件
+    if (fhs_.count(tab_name) > 0) {
+        rm_manager_->close_file(fhs_[tab_name].get());
+        fhs_.erase(tab_name);
+    }
+    rm_manager_->destroy_file(tab_name);
+
+    // 最后从元数据中删除表信息
     db_.tabs_.erase(tab_name);
     flush_meta();
 }
@@ -334,6 +339,11 @@ void SmManager::create_index(const std::string &tab_name, const std::vector<std:
         tot_len += idx_cols.back().len;
     }
 
+    // 检查索引文件是否已经存在，如果存在则先删除
+    if (ix_manager_->exists(tab_name, idx_cols)) {
+        ix_manager_->destroy_index(tab_name, idx_cols);
+    }
+
     ix_manager_->create_index(tab_name, idx_cols);
 
     // 打开索引文件获取索引句柄
@@ -354,14 +364,8 @@ void SmManager::create_index(const std::string &tab_name, const std::vector<std:
             offset += col.len;
         }
 
-        try {
-            // 将记录插入索引
-            ih->insert_entry(key, rid, context->txn_);
-        } catch (IndexEntryAlreadyExistError &) {
-            // 忽略重复键错误
-            delete[] key;
-            throw IndexEntryAlreadyExistError();
-        }
+        // 将记录插入索引，现在不会因为重复键而抛出异常
+        ih->insert_entry(key, rid, context->txn_);
 
         delete[] key;
     }

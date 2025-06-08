@@ -157,7 +157,8 @@ int IxNodeHandle::insert(const char* key, const Rid& value) {
     // 检查是否重复
     if (pos < get_size() &&
         ix_compare(get_key(pos), key, file_hdr->col_types_, file_hdr->col_lens_) == 0) {
-        throw std::runtime_error("Key already exists in the index.");
+        // 如果键已存在，直接返回当前大小，不抛出异常
+        return get_size();
     }
 
     // 如果key不存在，则在pos位置插入新的键值对
@@ -431,7 +432,7 @@ page_id_t IxIndexHandle::insert_entry(const char* key, const Rid& value, Transac
 
     if (new_size == old_size) {  // 插入失败（重复键），清理资源并返回
         buffer_pool_manager_->unpin_page(leaf_node->get_page_id(), false);
-        return INVALID_PAGE_ID;
+        return leaf_node->get_page_no();  // 返回叶子节点页号而不是无效页号
     }
 
     // 检查是否需要分裂
