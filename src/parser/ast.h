@@ -243,6 +243,21 @@ namespace ast
     };
 
     /**
+     * @brief 显示索引语句AST节点
+     *
+     * 表示SHOW INDEX FROM语句，用于查看表的索引信息
+     * 例如：SHOW INDEX FROM student
+     *
+     * @param tab_name 要查看索引的表名
+     */
+    struct ShowIndex : public TreeNode
+    {
+        std::string tab_name; // 表名
+
+        ShowIndex(std::string tab_name_) : tab_name(std::move(tab_name_)) {}
+    };
+
+    /**
      * @brief 创建索引语句AST节点
      *
      * 表示CREATE INDEX语句

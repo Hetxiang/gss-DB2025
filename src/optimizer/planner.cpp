@@ -627,6 +627,20 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         plannerRoot = std::make_shared<DDLPlan>(T_DropIndex, x->tab_name, x->col_names, std::vector<ColDef>());
     }
     // ===========================================
+    // 其他DDL语句处理
+    // ===========================================
+    
+    else if (auto x = std::dynamic_pointer_cast<ast::ShowIndex>(query->parse))
+    {
+        // ===============================
+        // SHOW INDEX FROM 语句处理
+        // ===============================
+        
+        // 创建其他类型执行计划：显示索引操作
+        // 用于查看指定表的索引信息
+        plannerRoot = std::make_shared<OtherPlan>(T_ShowIndex, x->tab_name);
+    }
+    // ===========================================
     // DML语句处理：数据操纵语言
     // ===========================================
     

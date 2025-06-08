@@ -56,6 +56,7 @@ typedef enum PlanTag{
     T_Help,                 // 帮助命令
     T_ShowTable,            // 显示表命令
     T_DescTable,            // 描述表结构命令
+    T_ShowIndex,            // 显示索引命令
     T_CreateTable,          // 创建表命令
     T_DropTable,            // 删除表命令
     T_CreateIndex,          // 创建索引命令

@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_abstract.h"
 #include "index/ix.h"
 #include "system/sm.h"
+#include <map>
 
 /**
  * @brief 索引扫描执行器
@@ -133,7 +134,10 @@ class IndexScanExecutor : public AbstractExecutor {
         std::unique_ptr<char[]> lower_key = nullptr;
         std::unique_ptr<char[]> upper_key = nullptr;
         
-        // 分析索引相关的条件
+        // 收集所有等值条件
+        std::map<std::string, Value> eq_conditions;
+        bool has_eq_cond = false;
+        
         for (const auto& cond : conds_) {
             if (!cond.is_rhs_val) continue; // 只处理与常量的比较
             
@@ -150,27 +154,44 @@ class IndexScanExecutor : public AbstractExecutor {
             
             // 根据操作符设置范围
             if (cond.op == OP_EQ) {
-                // 等值查询：设置相同的上下界
-                lower_key = std::make_unique<char[]>(index_meta_.col_tot_len);
-                upper_key = std::make_unique<char[]>(index_meta_.col_tot_len);
-                
-                // 构建索引键值
-                int offset = 0;
-                for (size_t i = 0; i < index_col_names_.size(); ++i) {
-                    const auto& col_meta = *tab_.get_col(index_col_names_[i]);
-                    if (cond.lhs_col.col_name == index_col_names_[i]) {
-                        memcpy(lower_key.get() + offset, cond.rhs_val.raw->data, col_meta.len);
-                        memcpy(upper_key.get() + offset, cond.rhs_val.raw->data, col_meta.len);
-                    }
-                    offset += col_meta.len;
+                eq_conditions[cond.lhs_col.col_name] = cond.rhs_val;
+                has_eq_cond = true;
+            }
+            // 可以扩展处理范围查询 (GT, LT, GE, LE)
+        }
+        
+        // 如果有等值条件，构建完整的索引键
+        if (has_eq_cond) {
+            lower_key = std::make_unique<char[]>(index_meta_.col_tot_len);
+            upper_key = std::make_unique<char[]>(index_meta_.col_tot_len);
+            
+            // 初始化键值为0
+            memset(lower_key.get(), 0, index_meta_.col_tot_len);
+            memset(upper_key.get(), 0, index_meta_.col_tot_len);
+            
+            // 构建索引键值：按索引列的顺序设置值
+            int offset = 0;
+            bool all_cols_have_eq = true;
+            for (size_t i = 0; i < index_col_names_.size(); ++i) {
+                const auto& col_meta = *tab_.get_col(index_col_names_[i]);
+                auto it = eq_conditions.find(index_col_names_[i]);
+                if (it != eq_conditions.end()) {
+                    // 找到了对应列的等值条件
+                    memcpy(lower_key.get() + offset, it->second.raw->data, col_meta.len);
+                    memcpy(upper_key.get() + offset, it->second.raw->data, col_meta.len);
+                } else {
+                    // 没有找到等值条件，无法构建精确的索引键
+                    all_cols_have_eq = false;
+                    break;
                 }
-                
+                offset += col_meta.len;
+            }
+            
+            if (all_cols_have_eq) {
                 lower_iid = ih->lower_bound(lower_key.get());
                 upper_iid = ih->upper_bound(upper_key.get());
                 has_lower = has_upper = true;
-                break; // 等值查询只需要一个条件
             }
-            // 可以扩展处理范围查询 (GT, LT, GE, LE)
         }
         
         // 如果没有可用的索引条件，回退到全索引扫描
