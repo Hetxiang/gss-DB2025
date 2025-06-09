@@ -10,6 +10,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "execution_manager.h"
 
+#include <fstream>
 #include "executor_delete.h"
 #include "executor_index_scan.h"
 #include "executor_insert.h"
@@ -147,6 +148,19 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
                 std::string plan_output(reinterpret_cast<char *>(result->data));
                 memcpy(context->data_send_ + *(context->offset_), plan_output.c_str(), plan_output.length());
                 *(context->offset_) += plan_output.length();
+
+                // 同时将EXPLAIN结果写入output.txt文件
+                std::fstream outfile;
+                outfile.open("output.txt", std::ios::out | std::ios::app);
+                if (outfile.is_open())
+                {
+                    outfile << plan_output;
+                    if (!plan_output.empty() && plan_output.back() != '\n')
+                    {
+                        outfile << "\n";
+                    }
+                    outfile.close();
+                }
             }
         }
     }
