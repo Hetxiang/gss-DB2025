@@ -105,7 +105,8 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         get_all_cols(query->tables, all_cols);
         if (query->cols.empty())
         {
-            // select all columns
+            // select all columns (SELECT *)
+            query->is_select_star = true;
             for (auto &col : all_cols)
             {
                 TabCol sel_col = {.tab_name = col.tab_name, .col_name = col.name};

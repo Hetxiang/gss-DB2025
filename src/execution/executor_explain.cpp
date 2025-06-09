@@ -172,7 +172,8 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
             {
                 return "Scan(table=Unknown)";
             }
-            return "Scan(table=" + get_display_table_name(scan_plan->tab_name_) + ")";
+            // Scan节点显示真实表名，不使用别名
+            return "Scan(table=" + scan_plan->tab_name_ + ")";
         }
         case T_Filter:
         {
@@ -260,6 +261,12 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
                 return "Project(columns=[Unknown])";
             }
 
+            // 检查是否为SELECT *查询
+            if (is_select_star_)
+            {
+                return "Project(columns=[*])";
+            }
+
             if (proj_plan->sel_cols_.empty())
             {
                 return "Project(columns=[*])";
@@ -298,7 +305,7 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
                 return "Join(tables=[Unknown],condition=[Unknown])";
             }
 
-            // 收集表名
+            // 收集表名（Join中显示完整表名，不使用别名）
             std::set<std::string> table_set;
             collectTableNames(join_plan, table_set);
 
@@ -319,7 +326,7 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
             {
                 try
                 {
-                    std::string condition_str = cond.lhs_col.tab_name + "." + cond.lhs_col.col_name;
+                    std::string condition_str = get_display_table_name(cond.lhs_col.tab_name) + "." + cond.lhs_col.col_name;
 
                     switch (cond.op)
                     {
@@ -346,7 +353,7 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
                         break;
                     }
 
-                    condition_str += cond.rhs_col.tab_name + "." + cond.rhs_col.col_name;
+                    condition_str += get_display_table_name(cond.rhs_col.tab_name) + "." + cond.rhs_col.col_name;
                     condition_strs.push_back(condition_str);
                 }
                 catch (...)
@@ -454,26 +461,20 @@ std::string ExplainExecutor::get_display_table_name(const std::string &table_nam
 {
     try
     {
-        // 查找是否有对应的别名
-        auto it = table_alias_map_.find(table_name);
-        if (it != table_alias_map_.end())
+        // table_alias_map_: alias -> table_name
+        // 需要通过table_name找alias
+        for (const auto &pair : table_alias_map_)
         {
-            return it->second;
+            if (pair.second == table_name)
+            {
+                return pair.first; // 返回别名
+            }
         }
+        // 如果没有找到别名，返回原表名
         return table_name;
     }
     catch (...)
     {
         return table_name; // 如果出错，返回原表名
     }
-
-    for (const auto &pair : table_alias_map_)
-    {
-        if (pair.second == table_name)
-        {
-            return pair.first; // 返回别名
-        }
-    }
-    // 如果没有找到别名，返回原表名
-    return table_name;
 }

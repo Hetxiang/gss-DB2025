@@ -134,6 +134,16 @@ private:
     std::shared_ptr<Plan> apply_predicate_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query);
 
     /**
+     * @brief 递归地将Filter节点下推到计划树的合适位置
+     */
+    std::shared_ptr<Plan> push_filters_down(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query);
+
+    /**
+     * @brief 从计划树中收集表名
+     */
+    void collect_table_names_from_plan(std::shared_ptr<Plan> plan, std::set<std::string> &table_names);
+
+    /**
      * @brief 在物理计划中应用投影下推
      * @param plan 基础计划树
      * @param query 查询对象，包含投影信息

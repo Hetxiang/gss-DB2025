@@ -137,7 +137,7 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
         {
             // 处理EXPLAIN语句：获取查询计划并发送给客户端
             // 从DMLPlan中获取表别名映射
-            ExplainExecutor explain_executor(x->subplan_, context, x->table_alias_map_);
+            ExplainExecutor explain_executor(x->subplan_, context, x->table_alias_map_, x->is_select_star_);
             explain_executor.beginTuple();
             auto result = explain_executor.Next();
 

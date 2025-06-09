@@ -39,6 +39,7 @@ private:
     bool has_executed_;                                  ///< 是否已经执行过
     mutable std::vector<ColMeta> explain_cols_;          ///< EXPLAIN输出的列元数据
     std::map<std::string, std::string> table_alias_map_; ///< 实际表名到别名的映射（用于显示）
+    bool is_select_star_;                                ///< 是否为SELECT *查询
 
     /**
      * @brief 递归格式化查询计划树
@@ -89,10 +90,12 @@ public:
      * @param plan 要解释的查询计划
      * @param context 查询执行上下文
      * @param table_alias_map 实际表名到别名的映射（用于EXPLAIN输出中显示原始别名）
+     * @param is_select_star 是否为SELECT *查询
      */
     ExplainExecutor(std::shared_ptr<Plan> plan, Context *context,
-                    const std::map<std::string, std::string> &table_alias_map = {})
-        : plan_(plan), context_(context), has_executed_(false), table_alias_map_(table_alias_map) {}
+                    const std::map<std::string, std::string> &table_alias_map = {},
+                    bool is_select_star = false)
+        : plan_(plan), context_(context), has_executed_(false), table_alias_map_(table_alias_map), is_select_star_(is_select_star) {}
 
     /**
      * @brief 开始执行EXPLAIN操作

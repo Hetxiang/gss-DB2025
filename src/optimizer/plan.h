@@ -272,6 +272,7 @@ public:
         values_ = std::move(values);
         conds_ = std::move(conds);
         set_clauses_ = std::move(set_clauses);
+        is_select_star_ = false; // 初始化新增的成员变量
     }
 
     /**
@@ -283,10 +284,12 @@ public:
      * @param conds 条件列表
      * @param set_clauses SET子句列表
      * @param table_alias_map 表别名映射
+     * @param is_select_star 是否为SELECT *查询
      */
     DMLPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::string tab_name,
             std::vector<Value> values, std::vector<Condition> conds,
-            std::vector<SetClause> set_clauses, std::map<std::string, std::string> table_alias_map)
+            std::vector<SetClause> set_clauses, std::map<std::string, std::string> table_alias_map,
+            bool is_select_star = false)
     {
         Plan::tag = tag;
         subplan_ = std::move(subplan);
@@ -295,6 +298,7 @@ public:
         conds_ = std::move(conds);
         set_clauses_ = std::move(set_clauses);
         table_alias_map_ = std::move(table_alias_map);
+        is_select_star_ = is_select_star;
     }
     ~DMLPlan() {}
 
@@ -304,6 +308,7 @@ public:
     std::vector<Condition> conds_;                       // 条件列表(WHERE子句)
     std::vector<SetClause> set_clauses_;                 // SET子句列表(UPDATE使用)
     std::map<std::string, std::string> table_alias_map_; // 表别名映射(EXPLAIN使用)
+    bool is_select_star_ = false;                        // 是否为SELECT *查询(EXPLAIN使用)
 };
 
 /**

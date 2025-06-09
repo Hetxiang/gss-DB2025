@@ -731,10 +731,14 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
     {
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
 
+        // 在move query之前保存需要的信息
+        auto table_alias_map = query->table_alias_map;
+        bool is_select_star = query->is_select_star;
+
         std::shared_ptr<Plan> projection = generate_select_plan(std::move(query), context);
 
         plannerRoot = std::make_shared<DMLPlan>(T_Explain, projection, std::string(), std::vector<Value>(),
-                                                std::vector<Condition>(), std::vector<SetClause>());
+                                                std::vector<Condition>(), std::vector<SetClause>(), table_alias_map, is_select_star);
     }
     else if (auto x = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse))
     {
@@ -930,16 +934,92 @@ std::shared_ptr<Plan> Planner::apply_predicate_pushdown(std::shared_ptr<Plan> pl
     if (!plan || !query)
         return plan;
 
-    // 从计划树中提取已下推的条件来构建Filter节点（用于EXPLAIN显示）
-    std::vector<Condition> filter_conditions;
-    extract_conditions_from_plan(plan, filter_conditions);
+    // 递归地对计划树进行谓词下推
+    return push_filters_down(plan, query);
+}
 
-    // 如果有WHERE条件，创建Filter节点包装当前计划
-    if (!filter_conditions.empty())
+/**
+ * @brief 递归地将Filter节点下推到计划树的合适位置
+ */
+std::shared_ptr<Plan> Planner::push_filters_down(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query)
+{
+    if (!plan)
+        return plan;
+
+    // 根据计划类型处理
+    if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
     {
-        // 清除ScanPlan中的条件，因为我们要在Filter节点中处理
+        // 递归处理左右子树
+        join_plan->left_ = push_filters_down(join_plan->left_, query);
+        join_plan->right_ = push_filters_down(join_plan->right_, query);
+
+        // 收集可以下推的WHERE条件
+        std::vector<Condition> all_conditions;
+        extract_conditions_from_plan(plan, all_conditions);
+
+        // 分离单表条件和连接条件
+        std::vector<Condition> left_conditions, right_conditions;
+        std::set<std::string> left_tables, right_tables;
+
+        // 收集左右子树的表名
+        collect_table_names_from_plan(join_plan->left_, left_tables);
+        collect_table_names_from_plan(join_plan->right_, right_tables);
+
+        // 分离条件
+        for (const auto &cond : all_conditions)
+        {
+            if (cond.is_rhs_val)
+            {
+                // 单表条件，检查属于哪个子树
+                if (left_tables.count(cond.lhs_col.tab_name))
+                {
+                    left_conditions.push_back(cond);
+                }
+                else if (right_tables.count(cond.lhs_col.tab_name))
+                {
+                    right_conditions.push_back(cond);
+                }
+            }
+        }
+
+        // 将单表条件下推到相应的子树
+        if (!left_conditions.empty())
+        {
+            join_plan->left_ = std::make_shared<FilterPlan>(T_Filter, join_plan->left_, left_conditions);
+        }
+        if (!right_conditions.empty())
+        {
+            join_plan->right_ = std::make_shared<FilterPlan>(T_Filter, join_plan->right_, right_conditions);
+        }
+
+        // 清除已经下推的条件
         clear_conditions_from_plan(plan);
-        plan = std::make_shared<FilterPlan>(T_Filter, plan, filter_conditions);
+
+        return plan;
+    }
+    else if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        // 对于Scan节点，将该表的条件包装为Filter
+        std::vector<Condition> table_conditions;
+        for (const auto &cond : scan_plan->conds_)
+        {
+            if (cond.is_rhs_val && cond.lhs_col.tab_name == scan_plan->tab_name_)
+            {
+                table_conditions.push_back(cond);
+            }
+        }
+
+        if (!table_conditions.empty())
+        {
+            // 清除Scan中的条件
+            scan_plan->conds_.clear();
+            scan_plan->fed_conds_.clear();
+
+            // 创建Filter节点包装Scan
+            return std::make_shared<FilterPlan>(T_Filter, plan, table_conditions);
+        }
+
+        return plan;
     }
 
     return plan;
@@ -980,8 +1060,9 @@ std::shared_ptr<Plan> Planner::apply_projection_pushdown(std::shared_ptr<Plan> p
         }
     }
 
-    // 如果不是SELECT *，则在合适的位置插入Project节点
-    if (query->cols.size() > 0 && !is_select_all(select_stmt))
+    // 对于SELECT *，只在根节点添加Project(columns=[*])
+    // 对于非SELECT *，需要在相关Scan节点上方添加Project节点
+    if (!query->is_select_star && query->cols.size() > 0)
     {
         plan = insert_project_nodes(plan, needed_columns, query->cols);
     }
@@ -1035,25 +1116,38 @@ std::shared_ptr<Plan> Planner::insert_project_nodes(std::shared_ptr<Plan> plan,
     // 根据计划类型决定如何插入Project节点
     if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
     {
-        // 对于Join节点，可能需要在子节点中插入Project节点
+        // 对于Join节点，递归处理左右子树
+        join_plan->left_ = insert_project_nodes(join_plan->left_, needed_columns, select_cols);
+        join_plan->right_ = insert_project_nodes(join_plan->right_, needed_columns, select_cols);
+        return plan;
+    }
+    else if (auto filter_plan = std::dynamic_pointer_cast<FilterPlan>(plan))
+    {
+        // 对于Filter节点，递归处理子计划
+        filter_plan->subplan_ = insert_project_nodes(filter_plan->subplan_, needed_columns, select_cols);
+        return plan;
+    }
+    else if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        // 对于Scan节点，检查是否需要在其上方添加Project节点
 
-        // 分析左右子树需要的列
-        std::set<std::string> left_cols, right_cols;
-        analyze_required_columns_for_subtree(join_plan->left_, needed_columns, left_cols);
-        analyze_required_columns_for_subtree(join_plan->right_, needed_columns, right_cols);
-
-        // 递归处理子节点
-        if (!left_cols.empty())
+        // 收集该表需要的列
+        std::vector<TabCol> table_cols;
+        for (const auto &col : select_cols)
         {
-            std::vector<TabCol> left_select_cols = convert_to_tabcol(left_cols);
-            join_plan->left_ = insert_project_nodes(join_plan->left_, left_cols, left_select_cols);
+            if (col.tab_name == scan_plan->tab_name_)
+            {
+                table_cols.push_back(col);
+            }
         }
 
-        if (!right_cols.empty())
+        // 如果该表有需要投影的列，在Scan上方添加Project节点
+        if (!table_cols.empty())
         {
-            std::vector<TabCol> right_select_cols = convert_to_tabcol(right_cols);
-            join_plan->right_ = insert_project_nodes(join_plan->right_, right_cols, right_select_cols);
+            return std::make_shared<ProjectionPlan>(T_Projection, plan, table_cols);
         }
+
+        return plan;
     }
 
     return plan;
@@ -1196,5 +1290,32 @@ void Planner::clear_conditions_from_plan(std::shared_ptr<Plan> plan)
         // 递归处理子节点
         clear_conditions_from_plan(join_plan->left_);
         clear_conditions_from_plan(join_plan->right_);
+    }
+}
+
+/**
+ * @brief 从计划树中收集表名
+ */
+void Planner::collect_table_names_from_plan(std::shared_ptr<Plan> plan, std::set<std::string> &table_names)
+{
+    if (!plan)
+        return;
+
+    if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        table_names.insert(scan_plan->tab_name_);
+    }
+    else if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        collect_table_names_from_plan(join_plan->left_, table_names);
+        collect_table_names_from_plan(join_plan->right_, table_names);
+    }
+    else if (auto filter_plan = std::dynamic_pointer_cast<FilterPlan>(plan))
+    {
+        collect_table_names_from_plan(filter_plan->subplan_, table_names);
+    }
+    else if (auto proj_plan = std::dynamic_pointer_cast<ProjectionPlan>(plan))
+    {
+        collect_table_names_from_plan(proj_plan->subplan_, table_names);
     }
 }
