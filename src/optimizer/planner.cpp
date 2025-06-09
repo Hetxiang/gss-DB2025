@@ -11,6 +11,7 @@ See the Mulan PSL v2 for more details. */
 #include "planner.h"
 
 #include <memory>
+#include <set>
 
 #include "execution/executor_delete.h"
 #include "execution/executor_index_scan.h"
@@ -22,18 +23,55 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
-// 目前的索引匹配规则为：完全匹配索引字段，且全部为单点查询，不会自动调整where条件的顺序
+// 改进的索引匹配规则：支持等值查询和范围查询，匹配索引字段
 bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string> &index_col_names)
 {
     index_col_names.clear();
+    std::set<std::string> indexed_columns;
+    
+    // 收集所有可以使用索引的列（等值查询和范围查询）
     for (auto &cond : curr_conds)
     {
-        if (cond.is_rhs_val && cond.op == OP_EQ && cond.lhs_col.tab_name.compare(tab_name) == 0)
-            index_col_names.push_back(cond.lhs_col.col_name);
+        if (cond.is_rhs_val && cond.lhs_col.tab_name.compare(tab_name) == 0)
+        {
+            // 支持等值查询和范围查询操作符
+            if (cond.op == OP_EQ || cond.op == OP_LT || cond.op == OP_GT ||
+                cond.op == OP_LE || cond.op == OP_GE || cond.op == OP_NE)
+            {
+                indexed_columns.insert(cond.lhs_col.col_name);
+            }
+        }
     }
+    
+    // 将集合转换为向量
+    for (const auto& col : indexed_columns)
+    {
+        index_col_names.push_back(col);
+    }
+    
     TabMeta &tab = sm_manager_->db_.get_table(tab_name);
-    if (tab.is_index(index_col_names))
-        return true;
+    
+    // 检查是否存在匹配的索引（单列索引或复合索引的前缀）
+    if (!index_col_names.empty())
+    {
+        // 优先查找单列索引
+        for (const auto& col : index_col_names)
+        {
+            std::vector<std::string> single_col = {col};
+            if (tab.is_index(single_col))
+            {
+                index_col_names = single_col;
+                return true;
+            }
+        }
+        
+        // 检查是否有复合索引可以使用
+        if (tab.is_index(index_col_names))
+        {
+            return true;
+        }
+    }
+    
     return false;
 }
 
