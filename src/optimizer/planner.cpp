@@ -544,10 +544,7 @@ std::shared_ptr<Plan> Planner::generate_select_plan(std::shared_ptr<Query> query
     query = logical_optimization(std::move(query), context);
 
     // 物理优化
-    auto sel_cols = query->cols;
     std::shared_ptr<Plan> plannerRoot = physical_optimization(query, context);
-    plannerRoot = std::make_shared<ProjectionPlan>(T_Projection, std::move(plannerRoot),
-                                                   std::move(sel_cols));
 
     return plannerRoot;
 }
@@ -1060,12 +1057,14 @@ std::shared_ptr<Plan> Planner::apply_projection_pushdown(std::shared_ptr<Plan> p
         }
     }
 
-    // 对于SELECT *，只在根节点添加Project(columns=[*])
-    // 对于非SELECT *，需要在相关Scan节点上方添加Project节点
-    if (!query->is_select_star && query->cols.size() > 0)
+    // 对于多表连接，在相关Scan节点上方添加Project节点进行投影下推
+    if (query->tables.size() > 1 && !query->is_select_star && query->cols.size() > 0)
     {
         plan = insert_project_nodes(plan, needed_columns, query->cols);
     }
+
+    // 总是在根节点添加Project节点
+    plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), query->cols);
 
     return plan;
 }
@@ -1129,23 +1128,9 @@ std::shared_ptr<Plan> Planner::insert_project_nodes(std::shared_ptr<Plan> plan,
     }
     else if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
     {
-        // 对于Scan节点，检查是否需要在其上方添加Project节点
-
-        // 收集该表需要的列
-        std::vector<TabCol> table_cols;
-        for (const auto &col : select_cols)
-        {
-            if (col.tab_name == scan_plan->tab_name_)
-            {
-                table_cols.push_back(col);
-            }
-        }
-
-        // 如果该表有需要投影的列，在Scan上方添加Project节点
-        if (!table_cols.empty())
-        {
-            return std::make_shared<ProjectionPlan>(T_Projection, plan, table_cols);
-        }
+        // 对于Scan节点，在单表查询的情况下不需要额外的Project节点
+        // 因为根节点已经有Project节点了
+        // 只有在多表连接的情况下才需要为每个表添加Project节点进行投影下推
 
         return plan;
     }
