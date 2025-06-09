@@ -264,4 +264,17 @@ private:
             {ast::SV_TYPE_INT, TYPE_INT}, {ast::SV_TYPE_FLOAT, TYPE_FLOAT}, {ast::SV_TYPE_STRING, TYPE_STRING}};
         return m.at(sv_type);
     }
+
+    /**
+     * @brief 从计划树中提取条件
+     * @param plan 计划节点
+     * @param conditions 提取的条件列表（输出参数）
+     */
+    void extract_conditions_from_plan(std::shared_ptr<Plan> plan, std::vector<Condition> &conditions);
+
+    /**
+     * @brief 清除计划树中的条件
+     * @param plan 计划节点
+     */
+    void clear_conditions_from_plan(std::shared_ptr<Plan> plan);
 };

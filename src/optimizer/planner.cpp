@@ -927,29 +927,19 @@ std::shared_ptr<Query> Planner::join_order_optimization(std::shared_ptr<Query> q
  */
 std::shared_ptr<Plan> Planner::apply_predicate_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query)
 {
-    if (!plan)
+    if (!plan || !query)
         return plan;
 
-    // 获取SELECT语句
-    auto select_stmt = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse);
-    if (!select_stmt)
-        return plan;
+    // 从计划树中提取已下推的条件来构建Filter节点（用于EXPLAIN显示）
+    std::vector<Condition> filter_conditions;
+    extract_conditions_from_plan(plan, filter_conditions);
 
-    // 收集所有WHERE条件（这些在make_one_rel中可能已经被处理了部分）
-    // 但为了实现完整的Filter节点，我们需要重新构建
-    std::vector<Condition> remaining_conditions;
-
-    // 从原始查询中收集WHERE条件
-    for (const auto &cond : query->conds)
+    // 如果有WHERE条件，创建Filter节点包装当前计划
+    if (!filter_conditions.empty())
     {
-        remaining_conditions.push_back(cond);
-    }
-
-    // 如果有剩余条件，在合适的位置插入Filter节点
-    if (!remaining_conditions.empty())
-    {
-        // 根据条件类型决定在哪里插入Filter节点
-        plan = insert_filter_nodes(plan, remaining_conditions);
+        // 清除ScanPlan中的条件，因为我们要在Filter节点中处理
+        clear_conditions_from_plan(plan);
+        plan = std::make_shared<FilterPlan>(T_Filter, plan, filter_conditions);
     }
 
     return plan;
@@ -1159,4 +1149,52 @@ bool Planner::is_select_all(std::shared_ptr<ast::SelectStmt> select_stmt)
         }
     }
     return false;
+}
+
+/**
+ * @brief 从计划树中提取条件
+ * @param plan 计划节点
+ * @param conditions 提取的条件列表（输出参数）
+ */
+void Planner::extract_conditions_from_plan(std::shared_ptr<Plan> plan, std::vector<Condition> &conditions)
+{
+    if (!plan)
+        return;
+
+    if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        // 从ScanPlan中提取条件
+        for (const auto &cond : scan_plan->conds_)
+        {
+            conditions.push_back(cond);
+        }
+    }
+    else if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        // 递归处理子节点
+        extract_conditions_from_plan(join_plan->left_, conditions);
+        extract_conditions_from_plan(join_plan->right_, conditions);
+    }
+}
+
+/**
+ * @brief 清除计划树中的条件
+ * @param plan 计划节点
+ */
+void Planner::clear_conditions_from_plan(std::shared_ptr<Plan> plan)
+{
+    if (!plan)
+        return;
+
+    if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        // 清除ScanPlan中的条件
+        scan_plan->conds_.clear();
+    }
+    else if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        // 递归处理子节点
+        clear_conditions_from_plan(join_plan->left_);
+        clear_conditions_from_plan(join_plan->right_);
+    }
 }
