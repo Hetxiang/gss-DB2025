@@ -16,7 +16,9 @@ See the Mulan PSL v2 for more details. */
  */
 void IxScan::next() {
     assert(!is_end());
+    std::cerr << "IX_SCAN" << std::endl;
     IxNodeHandle *node = ih_->fetch_node(iid_.page_no);
+    std::cerr << "IX_SCAN ENDL" << std::endl;
     assert(node->is_leaf_page());
     assert(iid_.slot_no < node->get_size());
     // increment slot no

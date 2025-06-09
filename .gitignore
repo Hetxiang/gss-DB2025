@@ -48,3 +48,6 @@ Thumbs.db
 
 DB/
 .clang-format
+
+yacc_parser_analysis.md
+DOCUMENTATION_SUMMARY.md
