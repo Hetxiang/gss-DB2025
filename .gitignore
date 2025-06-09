@@ -46,4 +46,5 @@ Thumbs.db
 *.tmp
 *~
 
-test_db/
+DB/
+.clang-format
