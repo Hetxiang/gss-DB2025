@@ -19,6 +19,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution/executor_projection.h"
 #include "execution/executor_seq_scan.h"
 #include "execution/executor_update.h"
+#include "execution/executor_explain.h"
 #include "index/ix.h"
 #include "record_printer.h"
 
@@ -141,19 +142,32 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
 
 std::shared_ptr<Query> Planner::logical_optimization(std::shared_ptr<Query> query, Context *context)
 {
+    // TODO: 实现三个逻辑优化规则
 
-    // TODO 实现逻辑优化规则
+    // 1. 谓词下推 (Predicate Pushdown)
+    query = predicate_pushdown(query);
+
+    // 2. 投影下推 (Projection Pushdown)
+    query = projection_pushdown(query);
+
+    // 3. 连接顺序优化 (Join Order Optimization)
+    query = join_order_optimization(query);
 
     return query;
 }
 
 std::shared_ptr<Plan> Planner::physical_optimization(std::shared_ptr<Query> query, Context *context)
 {
+    // 第一步：构建基本的扫描和连接计划
     std::shared_ptr<Plan> plan = make_one_rel(query);
 
-    // 其他物理优化
+    // 第二步：应用谓词下推 - 在计划树中插入Filter节点
+    plan = apply_predicate_pushdown(plan, query);
 
-    // 处理orderby
+    // 第三步：应用投影下推 - 在计划树中插入Project节点
+    plan = apply_projection_pushdown(plan, query);
+
+    // 第四步：处理ORDER BY
     plan = generate_sort_plan(query, std::move(plan));
 
     return plan;
@@ -540,19 +554,19 @@ std::shared_ptr<Plan> Planner::generate_select_plan(std::shared_ptr<Query> query
 
 /**
  * @brief 统一查询计划生成器 - SQL语句执行计划的总入口
- * 
+ *
  * 该函数是RMDB查询优化器的顶层接口，负责将各种类型的SQL语句转换为相应的执行计划。
  * 通过模式匹配识别SQL语句类型，并为每种语句类型生成专门的执行计划树。
  * 支持DDL（数据定义语言）和DML（数据操纵语言）两大类SQL语句。
- * 
+ *
  * @param query 包含解析后AST的Query对象，包含SQL语句的完整语法信息
  * @param context 查询执行上下文，包含事务信息、锁管理器等运行时环境
  * @return std::shared_ptr<Plan> 返回对应SQL语句类型的执行计划根节点
- * 
+ *
  * @details 支持的SQL语句类型：
  *          DDL语句：CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX
  *          DML语句：INSERT, DELETE, UPDATE, SELECT
- *          
+ *
  *          工作流程：
  *          1. 通过dynamic_pointer_cast进行AST类型识别
  *          2. 根据不同语句类型调用相应的计划生成逻辑
@@ -566,13 +580,13 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
     // ===========================================
     // DDL语句处理：数据定义语言
     // ===========================================
-    
+
     if (auto x = std::dynamic_pointer_cast<ast::CreateTable>(query->parse))
     {
         // ===============================
         // CREATE TABLE 语句处理
         // ===============================
-        
+
         // 解析表结构定义，将AST中的列定义转换为内部ColDef格式
         std::vector<ColDef> col_defs;
         for (auto &field : x->fields)
@@ -582,8 +596,8 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
             {
                 // 构建列定义结构体，包含列名、数据类型和长度
                 ColDef col_def = {.name = sv_col_def->col_name,
-                                  .type = interp_sv_type(sv_col_def->type_len->type),  // 类型转换
-                                  .len = sv_col_def->type_len->len};                   // 字段长度
+                                  .type = interp_sv_type(sv_col_def->type_len->type), // 类型转换
+                                  .len = sv_col_def->type_len->len};                  // 字段长度
                 col_defs.push_back(col_def);
             }
             else
@@ -591,7 +605,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
                 throw InternalError("Unexpected field type");
             }
         }
-        
+
         // 创建DDL执行计划：表创建操作
         // 参数：操作类型、表名、索引列名（空）、列定义
         plannerRoot = std::make_shared<DDLPlan>(T_CreateTable, x->tab_name, std::vector<std::string>(), col_defs);
@@ -601,7 +615,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
         // DROP TABLE 语句处理
         // ===============================
-        
+
         // 创建DDL执行计划：表删除操作
         // 删除表时不需要列定义信息，只需要表名
         plannerRoot = std::make_shared<DDLPlan>(T_DropTable, x->tab_name, std::vector<std::string>(), std::vector<ColDef>());
@@ -611,7 +625,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
         // CREATE INDEX 语句处理
         // ===============================
-        
+
         // 创建DDL执行计划：索引创建操作
         // 参数包含表名和要建立索引的列名列表
         plannerRoot = std::make_shared<DDLPlan>(T_CreateIndex, x->tab_name, x->col_names, std::vector<ColDef>());
@@ -621,7 +635,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
         // DROP INDEX 语句处理
         // ===============================
-        
+
         // 创建DDL执行计划：索引删除操作
         // 需要指定表名和要删除的索引列名
         plannerRoot = std::make_shared<DDLPlan>(T_DropIndex, x->tab_name, x->col_names, std::vector<ColDef>());
@@ -629,13 +643,13 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
     // ===========================================
     // DML语句处理：数据操纵语言
     // ===========================================
-    
+
     else if (auto x = std::dynamic_pointer_cast<ast::InsertStmt>(query->parse))
     {
         // ===============================
         // INSERT 语句处理
         // ===============================
-        
+
         // INSERT操作比较简单，不需要复杂的查询计划
         // 直接创建DML计划，包含要插入的值
         plannerRoot = std::make_shared<DMLPlan>(T_Insert, std::shared_ptr<Plan>(), x->tab_name,
@@ -646,18 +660,18 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
         // DELETE 语句处理
         // ===============================
-        
+
         // DELETE操作需要先扫描表找到要删除的记录，然后执行删除
-        
+
         // 第一步：生成表扫描计划（访问路径选择）
         std::shared_ptr<Plan> table_scan_executors;
-        
+
         // 检查是否有可用的索引来优化WHERE条件的扫描
         std::vector<std::string> index_col_names;
         bool index_exist = get_index_cols(x->tab_name, query->conds, index_col_names);
 
         if (index_exist == false)
-        { 
+        {
             // 情况1：没有合适的索引，使用顺序扫描
             // 清空索引列名，表示使用全表扫描
             index_col_names.clear();
@@ -665,7 +679,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
                 std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, x->tab_name, query->conds, index_col_names);
         }
         else
-        { 
+        {
             // 情况2：存在可用索引，使用索引扫描
             // 利用索引快速定位符合条件的记录，提升删除效率
             table_scan_executors =
@@ -682,36 +696,45 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
         // UPDATE 语句处理
         // ===============================
-        
+
         // UPDATE操作类似DELETE，也需要先扫描找到记录，然后执行更新
-        
+
         // 第一步：生成表扫描计划（访问路径选择）
         std::shared_ptr<Plan> table_scan_executors;
-        
+
         // 检查WHERE条件是否可以利用索引优化
         std::vector<std::string> index_col_names;
         bool index_exist = get_index_cols(x->tab_name, query->conds, index_col_names);
 
         if (index_exist == false)
-        { 
+        {
             // 情况1：没有合适的索引，使用顺序扫描
             index_col_names.clear();
             table_scan_executors =
                 std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, x->tab_name, query->conds, index_col_names);
         }
         else
-        { 
+        {
             // 情况2：存在可用索引，使用索引扫描
             // 索引扫描可以显著减少需要检查的记录数量
             table_scan_executors =
                 std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, x->tab_name, query->conds, index_col_names);
         }
-        
+
         // 第二步：创建UPDATE的DML执行计划
         // 包含扫描计划、WHERE条件和SET子句信息
         plannerRoot = std::make_shared<DMLPlan>(T_Update, table_scan_executors, x->tab_name,
                                                 std::vector<Value>(), query->conds,
                                                 query->set_clauses);
+    }
+    else if (auto x = std::dynamic_pointer_cast<ast::ExplainStmt>(query->parse))
+    {
+        std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
+
+        std::shared_ptr<Plan> projection = generate_select_plan(std::move(query), context);
+
+        plannerRoot = std::make_shared<DMLPlan>(T_Explain, projection, std::string(), std::vector<Value>(),
+                                                std::vector<Condition>(), std::vector<SetClause>());
     }
     else if (auto x = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse))
     {
@@ -720,17 +743,17 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===============================
 
         // SELECT是最复杂的查询类型，可能涉及多表连接、排序、聚合等
-        
+
         // 创建查询计划信息对象（用于后续优化参考）
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
-        
+
         // 调用专门的SELECT计划生成器进行复杂的查询优化
         // 包括：逻辑优化、物理优化、连接顺序选择、排序处理等
         std::shared_ptr<Plan> projection = generate_select_plan(std::move(query), context);
-        
+
         // 将SELECT查询结果包装为DML计划
         // 这样统一了所有SQL语句的执行接口
-        plannerRoot = std::make_shared<DMLPlan>(T_select, projection, std::string(), std::vector<Value>(),
+        plannerRoot = std::make_shared<DMLPlan>(T_Select, projection, std::string(), std::vector<Value>(),
                                                 std::vector<Condition>(), std::vector<SetClause>());
     }
     else
@@ -738,7 +761,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // ===========================================
         // 异常情况处理
         // ===========================================
-        
+
         // 如果AST根节点不匹配任何已知的SQL语句类型
         // 这可能是由于：
         // 1. 解析器支持了新的SQL语句类型但优化器尚未实现
@@ -746,11 +769,11 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         // 3. 不支持的SQL语法
         throw InternalError("Unexpected AST root");
     }
-    
+
     // ===========================================
     // 返回完整的执行计划
     // ===========================================
-    
+
     // 返回构建好的执行计划树，供执行引擎使用
     // 此时的plannerRoot包含了完整的执行逻辑，包括：
     // - 数据访问路径（顺序扫描或索引扫描）
@@ -758,4 +781,382 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
     // - 排序和投影操作
     // - 具体的操作类型（DDL或DML）
     return plannerRoot;
+}
+
+// ========== 查询优化算法实现 ==========
+
+/**
+ * @brief 谓词下推优化实现
+ * @param query 待优化的查询对象
+ * @return 优化后的查询对象
+ * @details 将WHERE条件尽可能下推到数据源附近，减少中间结果的数据量
+ */
+std::shared_ptr<Query> Planner::predicate_pushdown(std::shared_ptr<Query> query)
+{
+    // 谓词下推优化：将选择操作尽可能下推到扫描操作附近
+    // 目前在make_one_rel中已经实现了基本的条件下推逻辑
+    // 这里可以添加更复杂的谓词下推规则，比如：
+    // 1. 跨连接的条件下推
+    // 2. 复杂表达式的简化和下推
+    // 3. 条件的重新排序以提高过滤效率
+
+    // 当前实现：保持现有的条件下推逻辑不变
+    // 在make_one_rel中的pop_conds函数已经实现了基本的单表条件下推
+
+    return query;
+}
+
+/**
+ * @brief 投影下推优化实现
+ * @param query 待优化的查询对象
+ * @return 优化后的查询对象
+ * @details 将SELECT列选择尽可能下推，减少不必要的列传输
+ */
+std::shared_ptr<Query> Planner::projection_pushdown(std::shared_ptr<Query> query)
+{
+    // 投影下推优化：只传输查询真正需要的列
+    // 分析SELECT子句和WHERE子句中用到的列，
+    // 确保只从存储层读取必要的列数据
+
+    auto select_stmt = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse);
+    if (!select_stmt)
+    {
+        return query;
+    }
+
+    // 收集真正需要的列
+    std::set<std::string> needed_cols;
+
+    // 1. 添加SELECT子句中的列
+    for (const auto &col : query->cols)
+    {
+        needed_cols.insert(col.tab_name + "." + col.col_name);
+    }
+
+    // 2. 添加WHERE条件中涉及的列
+    for (const auto &cond : query->conds)
+    {
+        needed_cols.insert(cond.lhs_col.tab_name + "." + cond.lhs_col.col_name);
+        if (!cond.is_rhs_val)
+        {
+            needed_cols.insert(cond.rhs_col.tab_name + "." + cond.rhs_col.col_name);
+        }
+    }
+
+    // 3. 如果有ORDER BY，添加排序列
+    if (select_stmt->has_sort && select_stmt->order)
+    {
+        // 需要根据具体的AST结构来获取排序列信息
+        // 这里简化处理，实际实现需要根据ast::OrderBy的结构调整
+    }
+
+    // 当前简化实现：保持原有列选择不变
+    // 完整的投影下推需要更深入的执行计划树分析
+
+    return query;
+}
+
+/**
+ * @brief 连接顺序优化实现
+ * @param query 待优化的查询对象
+ * @return 优化后的查询对象
+ * @details 使用贪心算法基于表的基数(cardinality)优化连接顺序
+ */
+std::shared_ptr<Query> Planner::join_order_optimization(std::shared_ptr<Query> query)
+{
+    // 连接顺序优化：使用贪心算法基于表基数进行优化
+    // 基本策略：优先连接小表，减少中间结果的大小
+
+    if (query->tables.size() <= 2)
+    {
+        // 对于单表或两表查询，无需优化连接顺序
+        return query;
+    }
+
+    // 收集每个表的统计信息（基数估计）
+    std::vector<std::pair<std::string, size_t>> table_stats;
+
+    for (const auto &table_name : query->tables)
+    {
+        try
+        {
+            // 获取表的元数据信息
+            // TabMeta &tab_meta = sm_manager_->db_.get_table(table_name);
+
+            // 简单的基数估计：使用文件大小估算记录数
+            // 更精确的实现应该维护表的统计信息
+            size_t estimated_cardinality = 1000; // 默认估计值
+
+            // 可以通过以下方式获取更准确的基数：
+            // 1. 读取表的实际记录数（性能开销大）
+            // 2. 维护表的统计信息缓存
+            // 3. 使用直方图等高级统计方法
+
+            table_stats.emplace_back(table_name, estimated_cardinality);
+        }
+        catch (...)
+        {
+            // 如果无法获取表信息，使用默认值
+            table_stats.emplace_back(table_name, 1000);
+        }
+    }
+
+    // 基于贪心算法重排表顺序：按基数从小到大排序
+    std::sort(table_stats.begin(), table_stats.end(),
+              [](const std::pair<std::string, size_t> &a, const std::pair<std::string, size_t> &b)
+              {
+                  return a.second < b.second;
+              });
+
+    // 更新查询中的表顺序
+    std::vector<std::string> optimized_tables;
+    for (const auto &table_stat : table_stats)
+    {
+        optimized_tables.push_back(table_stat.first);
+    }
+    query->tables = std::move(optimized_tables);
+
+    return query;
+}
+
+/**
+ * @brief 在物理计划中应用谓词下推
+ * @param plan 基础计划树
+ * @param query 查询对象，包含谓词信息
+ * @return 插入Filter节点后的计划树
+ */
+std::shared_ptr<Plan> Planner::apply_predicate_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query)
+{
+    if (!plan)
+        return plan;
+
+    // 获取SELECT语句
+    auto select_stmt = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse);
+    if (!select_stmt)
+        return plan;
+
+    // 收集所有WHERE条件（这些在make_one_rel中可能已经被处理了部分）
+    // 但为了实现完整的Filter节点，我们需要重新构建
+    std::vector<Condition> remaining_conditions;
+
+    // 从原始查询中收集WHERE条件
+    for (const auto &cond : query->conds)
+    {
+        remaining_conditions.push_back(cond);
+    }
+
+    // 如果有剩余条件，在合适的位置插入Filter节点
+    if (!remaining_conditions.empty())
+    {
+        // 根据条件类型决定在哪里插入Filter节点
+        plan = insert_filter_nodes(plan, remaining_conditions);
+    }
+
+    return plan;
+}
+
+/**
+ * @brief 在物理计划中应用投影下推
+ * @param plan 基础计划树
+ * @param query 查询对象，包含投影信息
+ * @return 插入Project节点后的计划树
+ */
+std::shared_ptr<Plan> Planner::apply_projection_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query)
+{
+    if (!plan)
+        return plan;
+
+    // 获取SELECT语句
+    auto select_stmt = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse);
+    if (!select_stmt)
+        return plan;
+
+    // 分析查询中需要的列
+    std::set<std::string> needed_columns;
+
+    // 添加SELECT子句中的列
+    for (const auto &col : query->cols)
+    {
+        needed_columns.insert(col.tab_name + "." + col.col_name);
+    }
+
+    // 添加WHERE条件中涉及的列
+    for (const auto &cond : query->conds)
+    {
+        needed_columns.insert(cond.lhs_col.tab_name + "." + cond.lhs_col.col_name);
+        if (!cond.is_rhs_val)
+        {
+            needed_columns.insert(cond.rhs_col.tab_name + "." + cond.rhs_col.col_name);
+        }
+    }
+
+    // 如果不是SELECT *，则在合适的位置插入Project节点
+    if (query->cols.size() > 0 && !is_select_all(select_stmt))
+    {
+        plan = insert_project_nodes(plan, needed_columns, query->cols);
+    }
+
+    return plan;
+}
+
+/**
+ * @brief 在计划树中插入Filter节点
+ */
+std::shared_ptr<Plan> Planner::insert_filter_nodes(std::shared_ptr<Plan> plan, std::vector<Condition> &conditions)
+{
+    if (!plan || conditions.empty())
+        return plan;
+
+    // 将条件按照能够下推的程度分类
+    std::vector<Condition> applicable_conditions;
+
+    for (auto it = conditions.begin(); it != conditions.end();)
+    {
+        if (can_push_condition_to_plan(*it, plan))
+        {
+            applicable_conditions.push_back(*it);
+            it = conditions.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (!applicable_conditions.empty())
+    {
+        // 创建Filter节点
+        plan = std::make_shared<FilterPlan>(T_Filter, plan, applicable_conditions);
+    }
+
+    return plan;
+}
+
+/**
+ * @brief 在计划树中插入Project节点
+ */
+std::shared_ptr<Plan> Planner::insert_project_nodes(std::shared_ptr<Plan> plan,
+                                                    const std::set<std::string> &needed_columns,
+                                                    const std::vector<TabCol> &select_cols)
+{
+    if (!plan)
+        return plan;
+
+    // 根据计划类型决定如何插入Project节点
+    if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        // 对于Join节点，可能需要在子节点中插入Project节点
+
+        // 分析左右子树需要的列
+        std::set<std::string> left_cols, right_cols;
+        analyze_required_columns_for_subtree(join_plan->left_, needed_columns, left_cols);
+        analyze_required_columns_for_subtree(join_plan->right_, needed_columns, right_cols);
+
+        // 递归处理子节点
+        if (!left_cols.empty())
+        {
+            std::vector<TabCol> left_select_cols = convert_to_tabcol(left_cols);
+            join_plan->left_ = insert_project_nodes(join_plan->left_, left_cols, left_select_cols);
+        }
+
+        if (!right_cols.empty())
+        {
+            std::vector<TabCol> right_select_cols = convert_to_tabcol(right_cols);
+            join_plan->right_ = insert_project_nodes(join_plan->right_, right_cols, right_select_cols);
+        }
+    }
+
+    return plan;
+}
+
+/**
+ * @brief 检查条件是否可以下推到指定计划
+ */
+bool Planner::can_push_condition_to_plan(const Condition &cond, std::shared_ptr<Plan> plan)
+{
+    if (!plan)
+        return false;
+
+    // 对于扫描节点，检查条件是否涉及该表
+    if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        return cond.lhs_col.tab_name == scan_plan->tab_name_ && cond.is_rhs_val;
+    }
+
+    // 对于连接节点，条件可能涉及两个表
+    if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        return true; // 连接条件通常在连接节点处理
+    }
+
+    return false;
+}
+
+/**
+ * @brief 分析子树需要的列
+ */
+void Planner::analyze_required_columns_for_subtree(std::shared_ptr<Plan> plan,
+                                                   const std::set<std::string> &all_needed,
+                                                   std::set<std::string> &subtree_needed)
+{
+    if (!plan)
+        return;
+
+    if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan))
+    {
+        // 对于扫描节点，收集该表需要的列
+        for (const auto &col : all_needed)
+        {
+            if (col.find(scan_plan->tab_name_ + ".") == 0)
+            {
+                subtree_needed.insert(col);
+            }
+        }
+    }
+    else if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan))
+    {
+        // 递归处理连接节点
+        analyze_required_columns_for_subtree(join_plan->left_, all_needed, subtree_needed);
+        analyze_required_columns_for_subtree(join_plan->right_, all_needed, subtree_needed);
+    }
+}
+
+/**
+ * @brief 将字符串列名转换为TabCol对象
+ */
+std::vector<TabCol> Planner::convert_to_tabcol(const std::set<std::string> &col_names)
+{
+    std::vector<TabCol> result;
+    for (const auto &col_name : col_names)
+    {
+        auto dot_pos = col_name.find('.');
+        if (dot_pos != std::string::npos)
+        {
+            TabCol col;
+            col.tab_name = col_name.substr(0, dot_pos);
+            col.col_name = col_name.substr(dot_pos + 1);
+            result.push_back(col);
+        }
+    }
+    return result;
+}
+
+/**
+ * @brief 检查是否是SELECT *查询
+ */
+bool Planner::is_select_all(std::shared_ptr<ast::SelectStmt> select_stmt)
+{
+    if (!select_stmt || select_stmt->cols.empty())
+        return false;
+
+    // 检查是否只有一个列且为*
+    if (select_stmt->cols.size() == 1)
+    {
+        auto first_col = select_stmt->cols.front();
+        if (auto col = std::dynamic_pointer_cast<ast::Col>(first_col))
+        {
+            return col->col_name == "*";
+        }
+    }
+    return false;
 }

@@ -572,26 +572,13 @@ namespace ast
         bool has_sort;                  // 是否包含ORDER BY子句
         std::shared_ptr<OrderBy> order; // ORDER BY子句信息
 
-        // 兼容性构造函数（从旧的表名列表转换）
-        SelectStmt(std::vector<std::shared_ptr<Col>> cols_,
-                   std::vector<std::string> tabs_,
-                   std::vector<std::shared_ptr<BinaryExpr>> conds_,
-                   std::shared_ptr<OrderBy> order_) : cols(std::move(cols_)), conds(std::move(conds_)), order(std::move(order_))
-        {
-            has_sort = (bool)order; // 根据order指针是否为空判断是否有排序
-            // 将旧的表名列表转换为TableRef列表
-            for (const auto &tab : tabs_)
-            {
-                table_refs.push_back(std::make_shared<TableRef>(tab));
-            }
-        }
-
         // 新的构造函数，支持表引用
         SelectStmt(std::vector<std::shared_ptr<Col>> cols_,
                    std::vector<std::shared_ptr<TableRef>> table_refs_,
                    std::vector<std::shared_ptr<BinaryExpr>> conds_,
+                   std::vector<std::shared_ptr<JoinExpr>> jointree_,
                    std::shared_ptr<OrderBy> order_) : cols(std::move(cols_)), table_refs(std::move(table_refs_)),
-                                                      conds(std::move(conds_)), order(std::move(order_))
+                                                      conds(std::move(conds_)), jointree(std::move(jointree_)), order(std::move(order_))
         {
             has_sort = (bool)order; // 根据order指针是否为空判断是否有排序
         }
@@ -623,6 +610,26 @@ namespace ast
         bool bool_val_;             // 配置参数值
 
         SetStmt(SetKnobType &type, bool bool_value) : set_knob_type_(type), bool_val_(bool_value) {}
+    };
+
+    /**
+     * @brief EXPLAIN语句AST节点
+     *
+     * 表示EXPLAIN语句，用于显示查询计划，继承自SelectStmt
+     * 例如：EXPLAIN SELECT * FROM student WHERE age > 18
+     */
+    struct ExplainStmt : public SelectStmt
+    {
+        // 继承SelectStmt的所有构造函数
+        using SelectStmt::SelectStmt;
+        
+        // 默认构造函数
+        ExplainStmt(std::vector<std::shared_ptr<Col>> cols_,
+                   std::vector<std::shared_ptr<TableRef>> table_refs_,
+                   std::vector<std::shared_ptr<BinaryExpr>> conds_,
+                   std::vector<std::shared_ptr<JoinExpr>> jointree_,
+                   std::shared_ptr<OrderBy> order_) 
+            : SelectStmt(std::move(cols_), std::move(table_refs_), std::move(conds_), std::move(jointree_), std::move(order_)) {}
     };
 
     /**

@@ -134,6 +134,9 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             // 将JOIN ON条件添加到查询条件中
             query->conds.insert(query->conds.end(), join_conds.begin(), join_conds.end());
         }
+
+        // 保存别名映射到Query对象（用于EXPLAIN显示）
+        query->table_alias_map = alias_map;
     }
     else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse))
     {

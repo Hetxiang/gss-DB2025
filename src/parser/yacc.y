@@ -25,6 +25,7 @@ using namespace ast;
 WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN INNER LEFT RIGHT FULL ON AS EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
+%token EXPLAIN
 
 // type-specific tokens
 %token <sv_str> IDENTIFIER VALUE_STRING
@@ -161,15 +162,11 @@ dml:
     }
     |   SELECT selector FROM baseTableList joinList optWhereClause opt_order_clause
     {
-        // 创建支持JOIN的SELECT语句
-        auto stmt = std::make_shared<SelectStmt>($2, $4, $6, $7);
-        stmt->jointree = $5;  // 添加JOIN操作列表
-        $$ = stmt;
-    }
-    |   SELECT selector FROM baseTableList optWhereClause opt_order_clause
+        $$ = std::make_shared<SelectStmt>($2, $4, $6, $5, $7);
+    }    
+    | EXPLAIN SELECT selector FROM baseTableList joinList optWhereClause opt_order_clause   
     {
-        // 创建不包含JOIN的SELECT语句（兼容现有语法）
-        $$ = std::make_shared<SelectStmt>($2, $4, $5, $6);
+        $$ = std::make_shared<ExplainStmt>($3, $5, $7, $6, $8);
     }
     ;
 
@@ -453,7 +450,11 @@ baseTableList:
     ;
 
 joinList:
-        joinExpr
+        /* epsilon */
+    {
+        $$ = std::vector<std::shared_ptr<JoinExpr>>{};
+    }
+    |   joinExpr
     {
         $$ = std::vector<std::shared_ptr<JoinExpr>>{$1};
     }

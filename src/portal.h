@@ -37,6 +37,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution/executor_update.h"
 #include "execution/executor_insert.h"
 #include "execution/executor_delete.h"
+#include "execution/executor_explain.h"
 #include "execution/execution_sort.h"
 #include "common/common.h"
 
@@ -158,13 +159,14 @@ public:
 
             switch (x->tag)
             {
-            case T_select:
+            case T_Explain:
             {
-                // ===============================
-                // SELECT语句处理
-                // ===============================
+                // EXPLAIN语句处理：直接使用命令工具模式，避免包装成SELECT
+                return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
+            }
 
-                // 提取投影计划，获取选择列信息
+            case T_Select:
+            {
                 std::shared_ptr<ProjectionPlan> p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_);
 
                 // 递归转换子计划为执行器树

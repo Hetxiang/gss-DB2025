@@ -36,6 +36,8 @@ public:
     std::vector<SetClause> set_clauses;
     // insert 的values值
     std::vector<Value> values;
+    // 表别名映射（用于EXPLAIN显示）
+    std::map<std::string, std::string> table_alias_map;
 
     Query() {}
 };

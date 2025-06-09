@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_projection.h"
 #include "executor_seq_scan.h"
 #include "executor_update.h"
+#include "executor_explain.h"
 #include "index/ix.h"
 #include "record_printer.h"
 
@@ -128,6 +129,25 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
         default:
             throw InternalError("Unexpected field type");
             break;
+        }
+    }
+    else if (auto x = std::dynamic_pointer_cast<DMLPlan>(plan))
+    {
+        if (x->tag == T_Explain)
+        {
+            // 处理EXPLAIN语句：获取查询计划并发送给客户端
+            // 从DMLPlan中获取表别名映射
+            ExplainExecutor explain_executor(x->subplan_, context, x->table_alias_map_);
+            explain_executor.beginTuple();
+            auto result = explain_executor.Next();
+
+            if (result && result->data)
+            {
+                // 将查询计划输出发送给客户端
+                std::string plan_output(reinterpret_cast<char *>(result->data));
+                memcpy(context->data_send_ + *(context->offset_), plan_output.c_str(), plan_output.length());
+                *(context->offset_) += plan_output.length();
+            }
         }
     }
     else if (auto x = std::dynamic_pointer_cast<SetKnobPlan>(plan))

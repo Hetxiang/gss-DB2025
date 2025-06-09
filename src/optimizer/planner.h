@@ -23,6 +23,7 @@ See the Mulan PSL v2 for more details. */
 #include <memory>
 #include <string>
 #include <vector>
+#include <set>
 
 #include "execution/execution_defs.h"
 #include "execution/execution_manager.h"
@@ -99,6 +100,82 @@ private:
      *          目前可能是预留接口，用于扩展逻辑优化规则
      */
     std::shared_ptr<Query> logical_optimization(std::shared_ptr<Query> query, Context *context);
+
+    /**
+     * @brief 谓词下推优化
+     * @param query 待优化的查询对象
+     * @return 优化后的查询对象
+     * @details 将WHERE条件尽可能下推到数据源附近，减少中间结果的数据量
+     */
+    std::shared_ptr<Query> predicate_pushdown(std::shared_ptr<Query> query);
+
+    /**
+     * @brief 投影下推优化
+     * @param query 待优化的查询对象
+     * @return 优化后的查询对象
+     * @details 将SELECT列选择尽可能下推，减少不必要的列传输
+     */
+    std::shared_ptr<Query> projection_pushdown(std::shared_ptr<Query> query);
+
+    /**
+     * @brief 连接顺序优化
+     * @param query 待优化的查询对象
+     * @return 优化后的查询对象
+     * @details 使用贪心算法基于表的基数(cardinality)优化连接顺序
+     */
+    std::shared_ptr<Query> join_order_optimization(std::shared_ptr<Query> query);
+
+    /**
+     * @brief 在物理计划中应用谓词下推
+     * @param plan 基础计划树
+     * @param query 查询对象，包含谓词信息
+     * @return 插入Filter节点后的计划树
+     */
+    std::shared_ptr<Plan> apply_predicate_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query);
+
+    /**
+     * @brief 在物理计划中应用投影下推
+     * @param plan 基础计划树
+     * @param query 查询对象，包含投影信息
+     * @return 插入Project节点后的计划树
+     */
+    std::shared_ptr<Plan> apply_projection_pushdown(std::shared_ptr<Plan> plan, std::shared_ptr<Query> query);
+
+    // ========== 优化辅助方法 ==========
+
+    /**
+     * @brief 在计划树中插入Filter节点
+     */
+    std::shared_ptr<Plan> insert_filter_nodes(std::shared_ptr<Plan> plan, std::vector<Condition> &conditions);
+
+    /**
+     * @brief 在计划树中插入Project节点
+     */
+    std::shared_ptr<Plan> insert_project_nodes(std::shared_ptr<Plan> plan,
+                                               const std::set<std::string> &needed_columns,
+                                               const std::vector<TabCol> &select_cols);
+
+    /**
+     * @brief 检查条件是否可以下推到指定计划
+     */
+    bool can_push_condition_to_plan(const Condition &cond, std::shared_ptr<Plan> plan);
+
+    /**
+     * @brief 分析子树需要的列
+     */
+    void analyze_required_columns_for_subtree(std::shared_ptr<Plan> plan,
+                                              const std::set<std::string> &all_needed,
+                                              std::set<std::string> &subtree_needed);
+
+    /**
+     * @brief 将字符串列名转换为TabCol对象
+     */
+    std::vector<TabCol> convert_to_tabcol(const std::set<std::string> &col_names);
+
+    /**
+     * @brief 检查是否是SELECT *查询
+     */
+    bool is_select_all(std::shared_ptr<ast::SelectStmt> select_stmt);
 
     /**
      * @brief 物理优化阶段
