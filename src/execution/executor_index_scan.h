@@ -335,9 +335,6 @@ public:
         // 获取当前记录
         auto record = fh_->get_record(rid_, context_);
         
-        // 移动到下一个满足条件的记录
-        nextTuple();
-        
         return record;
     }
     

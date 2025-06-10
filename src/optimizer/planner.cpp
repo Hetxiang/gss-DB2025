@@ -23,7 +23,7 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
-// 改进的索引匹配规则：支持等值查询和范围查询，匹配索引字段
+// 索引匹配规则：支持等值查询和范围查询，匹配索引字段
 bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string> &index_col_names)
 {
     index_col_names.clear();

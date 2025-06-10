@@ -46,5 +46,7 @@ Thumbs.db
 *.tmp
 *~
 
-DB/
-.clang-format
+runS.sh
+runC.sh
+test.sh
+*_test_db/

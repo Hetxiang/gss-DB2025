@@ -1,6 +1,6 @@
-#line 2 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 2 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
-#line 4 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 4 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
 #define  YY_INT_ALIGNED short int
 
@@ -660,9 +660,9 @@ char *yytext;
         } \
     }
 
-#line 664 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 664 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
-#line 666 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 666 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
 #define INITIAL 0
 #define STATE_COMMENT 1
@@ -900,7 +900,7 @@ YY_DECL
 
 #line 48 "lex.l"
     /* block comment */
-#line 904 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 904 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1276,7 +1276,7 @@ YY_RULE_SETUP
 #line 132 "lex.l"
 ECHO;
 	YY_BREAK
-#line 1280 "/home/guo/code/db2024/rmdb/src/parser/lex.yy.cpp"
+#line 1280 "/home/pyh/Documents/gss-DB2025/src/parser/lex.yy.cpp"
 
 	case YY_END_OF_BUFFER:
 		{
