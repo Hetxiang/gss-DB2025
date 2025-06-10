@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_abstract.h"
 #include "index/ix.h"
 #include "system/sm.h"
+#include <map>
 
 /**
  * @brief 索引扫描执行器
@@ -127,54 +128,100 @@ class IndexScanExecutor : public AbstractExecutor {
         
         // 分析条件，构建索引查询范围
         Iid lower_iid, upper_iid;
-        bool has_lower = false, has_upper = false;
+        bool has_range = false;
         
-        // 构建索引键
-        std::unique_ptr<char[]> lower_key = nullptr;
-        std::unique_ptr<char[]> upper_key = nullptr;
-        
-        // 分析索引相关的条件
-        for (const auto& cond : conds_) {
-            if (!cond.is_rhs_val) continue; // 只处理与常量的比较
+        // 为单列索引构建范围查询
+        if (index_col_names_.size() == 1) {
+            const std::string& index_col = index_col_names_[0];
+            const auto& col_meta = *tab_.get_col(index_col);
             
-            // 检查是否是索引列的条件
-            bool is_index_col = false;
-            for (const auto& index_col : index_col_names_) {
-                if (cond.lhs_col.col_name == index_col) {
-                    is_index_col = true;
-                    break;
+            // 收集该列的所有条件
+            Value lower_val, upper_val;
+            bool has_lower = false, has_upper = false;
+            bool lower_inclusive = true, upper_inclusive = true;
+            
+            for (const auto& cond : conds_) {
+                if (!cond.is_rhs_val || cond.lhs_col.col_name != index_col) continue;
+                
+                switch (cond.op) {
+                    case OP_EQ:
+                        // 等值查询：设置相同的上下界
+                        lower_val = upper_val = cond.rhs_val;
+                        has_lower = has_upper = true;
+                        lower_inclusive = upper_inclusive = true;
+                        break;
+                    case OP_GT:
+                        // 大于：设置下界，不包含
+                        if (!has_lower || compare_values(cond.rhs_val, lower_val, col_meta.type) > 0) {
+                            lower_val = cond.rhs_val;
+                            has_lower = true;
+                            lower_inclusive = false;
+                        }
+                        break;
+                    case OP_GE:
+                        // 大于等于：设置下界，包含
+                        if (!has_lower || compare_values(cond.rhs_val, lower_val, col_meta.type) > 0) {
+                            lower_val = cond.rhs_val;
+                            has_lower = true;
+                            lower_inclusive = true;
+                        }
+                        break;
+                    case OP_LT:
+                        // 小于：设置上界，不包含
+                        if (!has_upper || compare_values(cond.rhs_val, upper_val, col_meta.type) < 0) {
+                            upper_val = cond.rhs_val;
+                            has_upper = true;
+                            upper_inclusive = false;
+                        }
+                        break;
+                    case OP_LE:
+                        // 小于等于：设置上界，包含
+                        if (!has_upper || compare_values(cond.rhs_val, upper_val, col_meta.type) < 0) {
+                            upper_val = cond.rhs_val;
+                            has_upper = true;
+                            upper_inclusive = true;
+                        }
+                        break;
                 }
             }
             
-            if (!is_index_col) continue;
-            
-            // 根据操作符设置范围
-            if (cond.op == OP_EQ) {
-                // 等值查询：设置相同的上下界
-                lower_key = std::make_unique<char[]>(index_meta_.col_tot_len);
-                upper_key = std::make_unique<char[]>(index_meta_.col_tot_len);
+            // 构建索引键并获取扫描范围
+            if (has_lower || has_upper) {
+                auto lower_key = std::make_unique<char[]>(index_meta_.col_tot_len);
+                auto upper_key = std::make_unique<char[]>(index_meta_.col_tot_len);
                 
-                // 构建索引键值
-                int offset = 0;
-                for (size_t i = 0; i < index_col_names_.size(); ++i) {
-                    const auto& col_meta = *tab_.get_col(index_col_names_[i]);
-                    if (cond.lhs_col.col_name == index_col_names_[i]) {
-                        memcpy(lower_key.get() + offset, cond.rhs_val.raw->data, col_meta.len);
-                        memcpy(upper_key.get() + offset, cond.rhs_val.raw->data, col_meta.len);
+                // 初始化键值
+                memset(lower_key.get(), 0, index_meta_.col_tot_len);
+                memset(upper_key.get(), 0, index_meta_.col_tot_len);
+                
+                if (has_lower) {
+                    memcpy(lower_key.get(), lower_val.raw->data, col_meta.len);
+                    if (lower_inclusive) {
+                        lower_iid = ih->lower_bound(lower_key.get());
+                    } else {
+                        lower_iid = ih->upper_bound(lower_key.get());
                     }
-                    offset += col_meta.len;
+                } else {
+                    lower_iid = ih->leaf_begin();
                 }
                 
-                lower_iid = ih->lower_bound(lower_key.get());
-                upper_iid = ih->upper_bound(upper_key.get());
-                has_lower = has_upper = true;
-                break; // 等值查询只需要一个条件
+                if (has_upper) {
+                    memcpy(upper_key.get(), upper_val.raw->data, col_meta.len);
+                    if (upper_inclusive) {
+                        upper_iid = ih->upper_bound(upper_key.get());
+                    } else {
+                        upper_iid = ih->lower_bound(upper_key.get());
+                    }
+                } else {
+                    upper_iid = ih->leaf_end();
+                }
+                
+                has_range = true;
             }
-            // 可以扩展处理范围查询 (GT, LT, GE, LE)
         }
         
         // 如果没有可用的索引条件，回退到全索引扫描
-        if (!has_lower || !has_upper) {
+        if (!has_range) {
             lower_iid = ih->leaf_begin();
             upper_iid = ih->leaf_end();
         }
@@ -192,6 +239,48 @@ class IndexScanExecutor : public AbstractExecutor {
             scan_->next();
         }
     }
+
+private:
+    /**
+     * @brief 比较两个值的大小
+     * @param val1 第一个值
+     * @param val2 第二个值
+     * @param type 值的类型
+     * @return 负数表示val1<val2，0表示相等，正数表示val1>val2
+     */
+    int compare_values(const Value& val1, const Value& val2, ColType type) {
+        switch (type) {
+            case TYPE_INT:
+                return *(int*)val1.raw->data - *(int*)val2.raw->data;
+            case TYPE_FLOAT:
+                {
+                    float f1 = *(float*)val1.raw->data;
+                    float f2 = *(float*)val2.raw->data;
+                    if (f1 < f2) return -1;
+                    if (f1 > f2) return 1;
+                    return 0;
+                }
+            case TYPE_STRING:
+                {
+                    // 使用更安全的字符串比较
+                    size_t len1 = strnlen((char*)val1.raw->data, val1.raw->size);
+                    size_t len2 = strnlen((char*)val2.raw->data, val2.raw->size);
+                    size_t min_len = std::min(len1, len2);
+                    
+                    int result = memcmp(val1.raw->data, val2.raw->data, min_len);
+                    if (result != 0) return result;
+                    
+                    // 如果前面的字符都相同，比较长度
+                    if (len1 < len2) return -1;
+                    if (len1 > len2) return 1;
+                    return 0;
+                }
+            default:
+                throw InternalError("Unsupported column type for comparison");
+        }
+    }
+
+public:
 
     /**
      * @brief 移动到下一个满足条件的记录
@@ -245,9 +334,6 @@ class IndexScanExecutor : public AbstractExecutor {
         
         // 获取当前记录
         auto record = fh_->get_record(rid_, context_);
-        
-        // 移动到下一个满足条件的记录
-        nextTuple();
         
         return record;
     }
