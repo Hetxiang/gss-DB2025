@@ -216,7 +216,6 @@ int IxNodeHandle::remove(const char* key) {
 IxIndexHandle::IxIndexHandle(DiskManager* disk_manager, BufferPoolManager* buffer_pool_manager, int fd)
     : disk_manager_(disk_manager), buffer_pool_manager_(buffer_pool_manager), fd_(fd) {
     // init file_hdr_
-    std::cerr << "????" <<std::endl;
     char* buf = new char[PAGE_SIZE];
     memset(buf, 0, PAGE_SIZE);
     disk_manager_->read_page(fd, IX_FILE_HDR_PAGE, buf, PAGE_SIZE);
@@ -713,7 +712,6 @@ bool IxIndexHandle::coalesce(IxNodeHandle** neighbor_node, IxNodeHandle** node, 
  * @note iid和rid存的不是一个东西，rid是上层传过来的记录位置，iid是索引内部生成的索引槽位置
  */
 Rid IxIndexHandle::get_rid(const Iid& iid) const {
-    std::cerr << "IID.page_no: " << iid.page_no << std::endl;
     IxNodeHandle* node = fetch_node(iid.page_no);
     if (iid.slot_no >= node->get_size()) {
         throw IndexEntryNotFoundError();
@@ -836,8 +834,6 @@ Iid IxIndexHandle::leaf_begin() const {
  * @note pin the page, remember to unpin it outside!
  */
 IxNodeHandle* IxIndexHandle::fetch_node(int page_no) const {
-    std::cerr << "FETCH_NODE" << std::endl;
-    std::cerr << "fd_ :" << fd_ << std::endl;
     Page* page = buffer_pool_manager_->fetch_page(PageId{fd_, page_no});
     IxNodeHandle* node = new IxNodeHandle(file_hdr_, page);
 

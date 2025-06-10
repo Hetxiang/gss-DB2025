@@ -242,7 +242,6 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
         {
             // 有可用索引：使用索引扫描（Index Scan）
             // 通过索引快速定位满足条件的记录，显著提升查询性能
-            std::cerr << "T_INDEXsCAN" << std::endl;
             table_scan_executors[i] =
                 std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, tables[i], curr_conds, index_col_names);
         }
