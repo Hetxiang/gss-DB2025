@@ -73,6 +73,7 @@ Page *BufferPoolManager::fetch_page(PageId page_id) {
     //  3.     调用disk_manager_的read_page读取目标页到frame
     //  4.     固定目标页，更新pin_count_
     //  5.     返回目标页
+    // std::cerr << "BUFFERPOOL_MANGER:: fetch_page" << std::endl;
     std::lock_guard<std::mutex> lock(latch_);
 
     const auto it = page_table_.find(page_id);
@@ -96,6 +97,9 @@ Page *BufferPoolManager::fetch_page(PageId page_id) {
 
     Page *page = &pages_[frame_id];
     update_page(page, page_id, frame_id);
+    // std::cerr << "BUFFERPOOL_MANGER:: fetch_page DISKMANGER" << std::endl;
+    std::cerr << "page_id.fd :" << page_id.fd << std::endl;
+    std::cerr << "page_id.page_no :" << page_id.page_no << std::endl;
     disk_manager_->read_page(page_id.fd, page_id.page_no, page->data_, PAGE_SIZE);
 
     page->pin_count_ = 1;
@@ -214,6 +218,7 @@ bool BufferPoolManager::delete_page(PageId page_id) {
     // 2.   若目标页的pin_count不为0，则返回false
     // 3.   将目标页数据写回磁盘，从页表中删除目标页，重置其元数据，将其加入free_list_，返回true
     std::lock_guard<std::mutex> lock(latch_);
+    std::cerr << "DELETE_PAGE" << std::endl;
 
     auto it = page_table_.find(page_id);
     if (it == page_table_.end()) {

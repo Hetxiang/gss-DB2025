@@ -122,6 +122,7 @@ class IndexScanExecutor : public AbstractExecutor {
      * 4. 定位到第一个满足条件的记录
      */
     void beginTuple() override {
+        std::cerr << "开始" << std::endl;
         // 获取索引句柄
         auto index_name = sm_manager_->get_ix_manager()->get_index_name(tab_name_, index_meta_.cols);
         auto ih = sm_manager_->ihs_.at(index_name).get();
@@ -234,10 +235,13 @@ class IndexScanExecutor : public AbstractExecutor {
             rid_ = scan_->rid();
             auto rec = fh_->get_record(rid_, context_);
             if (eval_conds(cols_, fed_conds_, rec.get())) {
+                std::cerr << "找到第一条有效数据" << std::endl;
                 return; // 找到第一个满足条件的记录
             }
+            std::cerr << "检查下一条数据" << std::endl;
             scan_->next();
         }
+        std::cerr << "找到第一条有效数据" << std::endl;
     }
 
 private:
@@ -298,12 +302,15 @@ public:
         }
         
         // 继续寻找下一个满足条件的记录
+        std::cerr << "NEXT——TUPLE下一条数据" << std::endl;
         while (!scan_->is_end()) {
             rid_ = scan_->rid();
             auto rec = fh_->get_record(rid_, context_);
             if (eval_conds(cols_, fed_conds_, rec.get())) {
+                std::cerr << "找到合法数据" << std::endl;
                 return; // 找到满足条件的记录
             }
+            std::cerr << "开始下一条" << std::endl;
             scan_->next();
         }
     }
