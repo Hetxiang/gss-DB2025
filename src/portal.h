@@ -28,18 +28,20 @@ See the Mulan PSL v2 for more details. */
 #include <cerrno>
 #include <cstring>
 #include <string>
-#include "optimizer/plan.h"
+
+#include "common/common.h"
+#include "execution/execution_sort.h"
 #include "execution/executor_abstract.h"
+#include "execution/executor_delete.h"
+#include "execution/executor_explain.h"
+#include "execution/executor_filter.h"
+#include "execution/executor_index_scan.h"
+#include "execution/executor_insert.h"
 #include "execution/executor_nestedloop_join.h"
 #include "execution/executor_projection.h"
 #include "execution/executor_seq_scan.h"
-#include "execution/executor_index_scan.h"
 #include "execution/executor_update.h"
-#include "execution/executor_insert.h"
-#include "execution/executor_delete.h"
-#include "execution/executor_explain.h"
-#include "execution/execution_sort.h"
-#include "common/common.h"
+#include "optimizer/plan.h"
 
 /**
  * @brief 门户类型枚举
@@ -47,13 +49,12 @@ See the Mulan PSL v2 for more details. */
  * 定义了不同类型的查询门户，用于区分和分发不同类型的SQL语句执行。
  * 每种门户类型对应不同的执行路径和处理方式。
  */
-typedef enum portalTag
-{
-    PORTAL_Invalid_Query = 0,  ///< 无效查询：语法错误或不支持的查询类型
-    PORTAL_ONE_SELECT,         ///< 单个SELECT查询：返回结果集的查询语句
-    PORTAL_DML_WITHOUT_SELECT, ///< 非SELECT的DML语句：INSERT/UPDATE/DELETE操作
-    PORTAL_MULTI_QUERY,        ///< 多语句查询：DDL语句或批量操作
-    PORTAL_CMD_UTILITY         ///< 实用工具命令：SHOW、DESC、SET等管理命令
+typedef enum portalTag {
+    PORTAL_Invalid_Query = 0,   ///< 无效查询：语法错误或不支持的查询类型
+    PORTAL_ONE_SELECT,          ///< 单个SELECT查询：返回结果集的查询语句
+    PORTAL_DML_WITHOUT_SELECT,  ///< 非SELECT的DML语句：INSERT/UPDATE/DELETE操作
+    PORTAL_MULTI_QUERY,         ///< 多语句查询：DDL语句或批量操作
+    PORTAL_CMD_UTILITY          ///< 实用工具命令：SHOW、DESC、SET等管理命令
 } portalTag;
 
 /**
@@ -62,13 +63,12 @@ typedef enum portalTag
  * 封装了一个完整的查询执行所需的所有信息，包括门户类型、选择列、
  * 执行器树根节点和原始执行计划。这是Portal系统处理的基本单元。
  */
-struct PortalStmt
-{
-    portalTag tag; ///< 门户类型标识
+struct PortalStmt {
+    portalTag tag;  ///< 门户类型标识
 
-    std::vector<TabCol> sel_cols;           ///< SELECT语句的投影列列表
-    std::unique_ptr<AbstractExecutor> root; ///< 执行器树的根节点
-    std::shared_ptr<Plan> plan;             ///< 原始执行计划（用于某些特殊处理）
+    std::vector<TabCol> sel_cols;            ///< SELECT语句的投影列列表
+    std::unique_ptr<AbstractExecutor> root;  ///< 执行器树的根节点
+    std::shared_ptr<Plan> plan;              ///< 原始执行计划（用于某些特殊处理）
 
     /**
      * @brief 构造函数
@@ -99,12 +99,11 @@ struct PortalStmt
  * 2. run() - 执行PortalStmt并获取结果
  * 3. drop() - 清理资源
  */
-class Portal
-{
-private:
-    SmManager *sm_manager_; ///< 系统管理器指针，用于访问表、索引等元数据
+class Portal {
+   private:
+    SmManager *sm_manager_;  ///< 系统管理器指针，用于访问表、索引等元数据
 
-public:
+   public:
     /**
      * @brief 构造函数
      * @param sm_manager 系统管理器指针
@@ -129,119 +128,102 @@ public:
      *          - DDLPlan: 数据定义语言计划
      *          - DMLPlan: 数据操纵语言计划
      */
-    std::shared_ptr<PortalStmt> start(std::shared_ptr<Plan> plan, Context *context)
-    {
+    std::shared_ptr<PortalStmt> start(std::shared_ptr<Plan> plan, Context *context) {
         // ===========================================
         // 计划类型识别与分发
         // ===========================================
 
         // 这里可以将select进行拆分，例如：一个select，带有return的select等
-        if (auto x = std::dynamic_pointer_cast<OtherPlan>(plan))
-        {
+        if (auto x = std::dynamic_pointer_cast<OtherPlan>(plan)) {
             // 其他类型计划：通常为系统管理命令
             return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
-        }
-        else if (auto x = std::dynamic_pointer_cast<SetKnobPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<SetKnobPlan>(plan)) {
             // 系统参数设置计划：SET命令
             return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
-        }
-        else if (auto x = std::dynamic_pointer_cast<DDLPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<DDLPlan>(plan)) {
             // 数据定义语言计划：CREATE/DROP TABLE/INDEX等
             return std::make_shared<PortalStmt>(PORTAL_MULTI_QUERY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
-        }
-        else if (auto x = std::dynamic_pointer_cast<DMLPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<DMLPlan>(plan)) {
             // ===========================================
             // DML计划处理：根据操作类型进一步分发
             // ===========================================
 
-            switch (x->tag)
-            {
-            case T_Explain:
-            {
-                // EXPLAIN语句处理：直接使用命令工具模式，避免包装成SELECT
-                return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
-            }
-
-            case T_Select:
-            {
-                std::shared_ptr<ProjectionPlan> p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_);
-
-                // 递归转换子计划为执行器树
-                std::unique_ptr<AbstractExecutor> root = convert_plan_executor(p, context);
-
-                // 创建SELECT门户语句，包含投影列和执行器树
-                return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(p->sel_cols_), std::move(root), plan);
-            }
-
-            case T_Update:
-            {
-                // ===============================
-                // UPDATE语句处理
-                // ===============================
-
-                // 第一步：执行扫描计划，收集需要更新的记录ID
-                std::unique_ptr<AbstractExecutor> scan = convert_plan_executor(x->subplan_, context);
-                std::vector<Rid> rids;
-
-                // 遍历扫描结果，收集所有符合条件的记录ID
-                for (scan->beginTuple(); !scan->is_end(); scan->nextTuple())
-                {
-                    rids.push_back(scan->rid());
+            switch (x->tag) {
+                case T_Explain: {
+                    // EXPLAIN语句处理：直接使用命令工具模式，避免包装成SELECT
+                    return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
                 }
 
-                // 第二步：创建UPDATE执行器，传入收集到的记录ID
-                std::unique_ptr<AbstractExecutor> root = std::make_unique<UpdateExecutor>(sm_manager_,
-                                                                                          x->tab_name_, x->set_clauses_, x->conds_, rids, context);
+                case T_Select: {
+                    std::shared_ptr<ProjectionPlan> p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_);
+                    std::cerr << "debug2" << std::endl;
+                    // 递归转换子计划为执行器树
+                    std::unique_ptr<AbstractExecutor> root = convert_plan_executor(p, context);
 
-                return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
-            }
-            case T_Delete:
-            {
-                // ===============================
-                // DELETE语句处理
-                // ===============================
-
-                // 第一步：执行扫描计划，收集需要删除的记录ID
-                std::unique_ptr<AbstractExecutor> scan = convert_plan_executor(x->subplan_, context);
-                std::vector<Rid> rids;
-
-                // 遍历扫描结果，收集所有符合条件的记录ID
-                for (scan->beginTuple(); !scan->is_end(); scan->nextTuple())
-                {
-                    rids.push_back(scan->rid());
+                    std::cerr << "debug1" << std::endl;
+                    // 创建SELECT门户语句，包含投影列和执行器树
+                    return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(p->sel_cols_), std::move(root), plan);
                 }
 
-                // 第二步：创建DELETE执行器，传入收集到的记录ID
-                std::unique_ptr<AbstractExecutor> root =
-                    std::make_unique<DeleteExecutor>(sm_manager_, x->tab_name_, x->conds_, rids, context);
+                case T_Update: {
+                    // ===============================
+                    // UPDATE语句处理
+                    // ===============================
 
-                return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
+                    // 第一步：执行扫描计划，收集需要更新的记录ID
+                    std::unique_ptr<AbstractExecutor> scan = convert_plan_executor(x->subplan_, context);
+                    std::vector<Rid> rids;
+
+                    // 遍历扫描结果，收集所有符合条件的记录ID
+                    for (scan->beginTuple(); !scan->is_end(); scan->nextTuple()) {
+                        rids.push_back(scan->rid());
+                    }
+
+                    // 第二步：创建UPDATE执行器，传入收集到的记录ID
+                    std::unique_ptr<AbstractExecutor> root = std::make_unique<UpdateExecutor>(sm_manager_,
+                                                                                              x->tab_name_, x->set_clauses_, x->conds_, rids, context);
+
+                    return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
+                }
+                case T_Delete: {
+                    // ===============================
+                    // DELETE语句处理
+                    // ===============================
+
+                    // 第一步：执行扫描计划，收集需要删除的记录ID
+                    std::unique_ptr<AbstractExecutor> scan = convert_plan_executor(x->subplan_, context);
+                    std::vector<Rid> rids;
+
+                    // 遍历扫描结果，收集所有符合条件的记录ID
+                    for (scan->beginTuple(); !scan->is_end(); scan->nextTuple()) {
+                        rids.push_back(scan->rid());
+                    }
+
+                    // 第二步：创建DELETE执行器，传入收集到的记录ID
+                    std::unique_ptr<AbstractExecutor> root =
+                        std::make_unique<DeleteExecutor>(sm_manager_, x->tab_name_, x->conds_, rids, context);
+
+                    return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
+                }
+
+                case T_Insert: {
+                    // ===============================
+                    // INSERT语句处理
+                    // ===============================
+
+                    // INSERT操作相对简单，直接创建插入执行器
+                    // 不需要预先扫描，直接插入指定的值
+                    std::unique_ptr<AbstractExecutor> root =
+                        std::make_unique<InsertExecutor>(sm_manager_, x->tab_name_, x->values_, context);
+
+                    return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
+                }
+
+                default:
+                    throw InternalError("Unexpected field type");
+                    break;
             }
-
-            case T_Insert:
-            {
-                // ===============================
-                // INSERT语句处理
-                // ===============================
-
-                // INSERT操作相对简单，直接创建插入执行器
-                // 不需要预先扫描，直接插入指定的值
-                std::unique_ptr<AbstractExecutor> root =
-                    std::make_unique<InsertExecutor>(sm_manager_, x->tab_name_, x->values_, context);
-
-                return std::make_shared<PortalStmt>(PORTAL_DML_WITHOUT_SELECT, std::vector<TabCol>(), std::move(root), plan);
-            }
-
-            default:
-                throw InternalError("Unexpected field type");
-                break;
-            }
-        }
-        else
-        {
+        } else {
             throw InternalError("Unexpected field type");
         }
         return nullptr;
@@ -264,47 +246,40 @@ public:
      *          - PORTAL_MULTI_QUERY: DDL操作，执行结构变更
      *          - PORTAL_CMD_UTILITY: 工具命令，执行管理操作
      */
-    void run(std::shared_ptr<PortalStmt> portal, QlManager *ql, txn_id_t *txn_id, Context *context)
-    {
+    void run(std::shared_ptr<PortalStmt> portal, QlManager *ql, txn_id_t *txn_id, Context *context) {
         // ===========================================
         // 门户类型分发执行
         // ===========================================
 
-        switch (portal->tag)
-        {
-        case PORTAL_ONE_SELECT:
-        {
-            // SELECT查询执行：遍历执行器树，输出结果集
-            // 使用投影列信息格式化输出
-            ql->select_from(std::move(portal->root), std::move(portal->sel_cols), context);
-            break;
-        }
+        switch (portal->tag) {
+            case PORTAL_ONE_SELECT: {
+                // SELECT查询执行：遍历执行器树，输出结果集
+                // 使用投影列信息格式化输出
+                ql->select_from(std::move(portal->root), std::move(portal->sel_cols), context);
+                break;
+            }
 
-        case PORTAL_DML_WITHOUT_SELECT:
-        {
-            // DML操作执行：INSERT/UPDATE/DELETE
-            // 执行数据修改操作，返回影响的行数
-            ql->run_dml(std::move(portal->root));
-            break;
-        }
-        case PORTAL_MULTI_QUERY:
-        {
-            // DDL操作执行：CREATE/DROP TABLE/INDEX
-            // 直接使用原始计划，因为DDL不需要复杂的执行器树
-            ql->run_mutli_query(portal->plan, context);
-            break;
-        }
-        case PORTAL_CMD_UTILITY:
-        {
-            // 工具命令执行：SHOW、DESC、SET等
-            // 传入事务ID用于某些需要事务上下文的命令
-            ql->run_cmd_utility(portal->plan, txn_id, context);
-            break;
-        }
-        default:
-        {
-            throw InternalError("Unexpected field type");
-        }
+            case PORTAL_DML_WITHOUT_SELECT: {
+                // DML操作执行：INSERT/UPDATE/DELETE
+                // 执行数据修改操作，返回影响的行数
+                ql->run_dml(std::move(portal->root));
+                break;
+            }
+            case PORTAL_MULTI_QUERY: {
+                // DDL操作执行：CREATE/DROP TABLE/INDEX
+                // 直接使用原始计划，因为DDL不需要复杂的执行器树
+                ql->run_mutli_query(portal->plan, context);
+                break;
+            }
+            case PORTAL_CMD_UTILITY: {
+                // 工具命令执行：SHOW、DESC、SET等
+                // 传入事务ID用于某些需要事务上下文的命令
+                ql->run_cmd_utility(portal->plan, txn_id, context);
+                break;
+            }
+            default: {
+                throw InternalError("Unexpected field type");
+            }
         }
     }
 
@@ -324,8 +299,7 @@ public:
      *       - 锁资源释放
      *       - 缓存清理
      */
-    void drop()
-    {
+    void drop() {
         // 当前使用智能指针自动管理内存，无需手动清理
         // 未来可能需要添加特定资源的清理逻辑
     }
@@ -352,39 +326,30 @@ public:
      *       2. 再创建当前层级的执行器
      *       3. 建立执行器之间的父子关系
      */
-    std::unique_ptr<AbstractExecutor> convert_plan_executor(std::shared_ptr<Plan> plan, Context *context)
-    {
+    std::unique_ptr<AbstractExecutor> convert_plan_executor(std::shared_ptr<Plan> plan, Context *context) {
         // ===========================================
         // 计划类型识别与执行器创建
         // ===========================================
 
-        if (auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan))
-        {
+        if (auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
             // ===============================
             // 投影计划转换
             // ===============================
             // 递归转换子计划，然后创建投影执行器包装子执行器
             return std::make_unique<ProjectionExecutor>(convert_plan_executor(x->subplan_, context),
                                                         x->sel_cols_);
-        }
-        else if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
             // ===============================
             // 扫描计划转换
             // ===============================
-            if (x->tag == T_SeqScan)
-            {
+            if (x->tag == T_SeqScan) {
                 // 顺序扫描：遍历表中所有记录
                 return std::make_unique<SeqScanExecutor>(sm_manager_, x->tab_name_, x->conds_, context);
-            }
-            else
-            {
+            } else {
                 // 索引扫描：利用索引快速定位记录
                 return std::make_unique<IndexScanExecutor>(sm_manager_, x->tab_name_, x->conds_, x->index_col_names_, context);
             }
-        }
-        else if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
             // ===============================
             // 连接计划转换
             // ===============================
@@ -395,9 +360,14 @@ public:
                 std::move(left),
                 std::move(right), std::move(x->conds_));
             return join;
-        }
-        else if (auto x = std::dynamic_pointer_cast<SortPlan>(plan))
-        {
+        } else if (auto x = std::dynamic_pointer_cast<FilterPlan>(plan)) {
+            // ===============================
+            // 过滤计划转换
+            // ===============================
+            // 递归转换子计划，创建过滤执行器
+            return std::make_unique<FilterExecutor>(convert_plan_executor(x->subplan_, context),
+                                                    x->conds_);
+        } else if (auto x = std::dynamic_pointer_cast<SortPlan>(plan)) {
             // ===============================
             // 排序计划转换
             // ===============================
