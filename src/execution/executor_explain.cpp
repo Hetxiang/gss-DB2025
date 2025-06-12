@@ -337,34 +337,54 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
             {
                 try
                 {
-                    std::string condition_str = get_display_table_name(cond.lhs_col.tab_name) + "." + cond.lhs_col.col_name;
+                    // 尝试恢复更自然的表名顺序，优先显示按字母顺序在前的表
+                    std::string left_table = get_display_table_name(cond.lhs_col.tab_name);
+                    std::string right_table = get_display_table_name(cond.rhs_col.tab_name);
+                    std::string left_column = cond.lhs_col.col_name;
+                    std::string right_column = cond.rhs_col.col_name;
+                    CompOp op = cond.op;
+                    
+                    // 如果右表名按字母顺序在前，交换显示顺序（但不改变实际逻辑）
+                    if (right_table < left_table) {
+                        std::swap(left_table, right_table);
+                        std::swap(left_column, right_column);
+                        // 交换操作符
+                        std::map<CompOp, CompOp> swap_op = {
+                            {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, 
+                            {OP_LT, OP_GT}, {OP_GT, OP_LT}, 
+                            {OP_LE, OP_GE}, {OP_GE, OP_LE}
+                        };
+                        op = swap_op.at(op);
+                    }
 
-                    switch (cond.op)
+                    std::string condition_str = left_table + "." + left_column;
+
+                    switch (op)
                     {
                     case OP_EQ:
-                        condition_str += "=";
+                        condition_str += " = ";
                         break;
                     case OP_NE:
-                        condition_str += "<>";
+                        condition_str += " <> ";
                         break;
                     case OP_LT:
-                        condition_str += "<";
+                        condition_str += " < ";
                         break;
                     case OP_GT:
-                        condition_str += ">";
+                        condition_str += " > ";
                         break;
                     case OP_LE:
-                        condition_str += "<=";
+                        condition_str += " <= ";
                         break;
                     case OP_GE:
-                        condition_str += ">=";
+                        condition_str += " >= ";
                         break;
                     default:
-                        condition_str += "?";
+                        condition_str += " ? ";
                         break;
                     }
 
-                    condition_str += get_display_table_name(cond.rhs_col.tab_name) + "." + cond.rhs_col.col_name;
+                    condition_str += right_table + "." + right_column;
                     condition_strs.push_back(condition_str);
                 }
                 catch (...)
@@ -373,7 +393,8 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
                 }
             }
 
-            std::sort(condition_strs.begin(), condition_strs.end());
+            // 移除排序，保持原始顺序
+            // std::sort(condition_strs.begin(), condition_strs.end());
 
             std::string join_conds = "";
             for (size_t i = 0; i < condition_strs.size(); ++i)

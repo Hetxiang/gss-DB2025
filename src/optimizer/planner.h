@@ -125,6 +125,25 @@ class Planner {
     std::shared_ptr<Query> join_order_optimization(std::shared_ptr<Query> query);
 
     /**
+     * @brief 估算表的行数基数
+     * @param table_name 表名
+     * @return 估算的表行数
+     * @details 通过扫描表文件的页面来估算实际记录数量
+     */
+    size_t estimate_table_cardinality(const std::string &table_name);
+
+    /**
+     * @brief 贪心连接顺序优化算法
+     * @param table_stats 表的统计信息（表名和基数）
+     * @param conditions 连接条件列表
+     * @return 优化后的表顺序
+     * @details 实现贪心算法：从最小的两个表开始，逐步添加能最小化中间结果大小的表
+     */
+    std::vector<std::string> greedy_join_order_optimization(
+        const std::vector<std::pair<std::string, size_t>> &table_stats,
+        const std::vector<Condition> &conditions);
+
+    /**
      * @brief 在物理计划中应用谓词下推
      * @param plan 基础计划树
      * @param query 查询对象，包含谓词信息

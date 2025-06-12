@@ -18,6 +18,9 @@ lib/
 *.o
 *.obj
 *.exe
+*.py
+*.sql
+*.sh
 
 # IDE配置文件
 .vscode/

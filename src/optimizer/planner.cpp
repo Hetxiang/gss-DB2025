@@ -10,8 +10,11 @@ See the Mulan PSL v2 for more details. */
 
 #include "planner.h"
 
+#include <algorithm>
+#include <climits>
 #include <memory>
 #include <set>
+#include <unordered_map>
 
 #include "execution/executor_delete.h"
 #include "execution/executor_explain.h"
@@ -22,6 +25,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution/executor_seq_scan.h"
 #include "execution/executor_update.h"
 #include "index/ix.h"
+#include "record/rm.h"
 #include "record_printer.h"
 
 // 索引匹配规则：支持等值查询和范围查询，匹配索引字段
@@ -829,13 +833,8 @@ std::shared_ptr<Query> Planner::join_order_optimization(std::shared_ptr<Query> q
 
     for (const auto &table_name : query->tables) {
         try {
-            // 获取表的元数据信息
-            // TabMeta &tab_meta = sm_manager_->db_.get_table(table_name);
-
-            // 简单的基数估计：使用文件大小估算记录数
-            // 更精确的实现应该维护表的统计信息
-            size_t estimated_cardinality = 1000;  // 默认估计值
-
+            // 获取表的实际行数估计
+            size_t estimated_cardinality = estimate_table_cardinality(table_name);
             table_stats.emplace_back(table_name, estimated_cardinality);
         } catch (...) {
             // 如果无法获取表信息，使用默认值
@@ -843,20 +842,155 @@ std::shared_ptr<Query> Planner::join_order_optimization(std::shared_ptr<Query> q
         }
     }
 
-    // 基于贪心算法重排表顺序：按基数从小到大排序
-    std::sort(table_stats.begin(), table_stats.end(),
-              [](const std::pair<std::string, size_t> &a, const std::pair<std::string, size_t> &b) {
-                  return a.second < b.second;
-              });
-
-    // 更新查询中的表顺序
-    std::vector<std::string> optimized_tables;
-    for (const auto &table_stat : table_stats) {
-        optimized_tables.push_back(table_stat.first);
-    }
+    // 实现贪心连接顺序优化算法
+    std::vector<std::string> optimized_tables = greedy_join_order_optimization(table_stats, query->conds);
     query->tables = std::move(optimized_tables);
 
     return query;
+}
+
+/**
+ * @brief 估算表的行数基数
+ * @param table_name 表名
+ * @return 估算的表行数
+ * @details 通过扫描表文件的页面来估算实际记录数量
+ */
+size_t Planner::estimate_table_cardinality(const std::string &table_name) {
+    try {
+        // 获取表的文件句柄
+        if (sm_manager_->fhs_.find(table_name) == sm_manager_->fhs_.end()) {
+            // 表文件未打开，使用默认估计值
+            return 1000;
+        }
+        
+        auto &file_handle = sm_manager_->fhs_[table_name];
+        auto file_hdr = file_handle->get_file_hdr();
+        
+        // 使用页面数量和每页记录数来粗略估算
+        // 假设页面利用率为70%
+        size_t estimated_pages = file_hdr.num_pages > 1 ? file_hdr.num_pages - 1 : 0; // 减去文件头页面
+        size_t estimated_records = estimated_pages * file_hdr.num_records_per_page * 0.7;
+        
+        return estimated_records > 0 ? estimated_records : 1;  // 至少返回1避免除零错误
+    } catch (...) {
+        // 如果出现任何错误，返回默认值
+        return 1000;
+    }
+}
+
+/**
+ * @brief 贪心连接顺序优化算法
+ * @param table_stats 表的统计信息（表名和基数）
+ * @param conditions 连接条件列表
+ * @return 优化后的表顺序
+ * @details 实现贪心算法：从最小的两个表开始，逐步添加能最小化中间结果大小的表
+ */
+std::vector<std::string> Planner::greedy_join_order_optimization(
+    const std::vector<std::pair<std::string, size_t>> &table_stats,
+    const std::vector<Condition> &conditions) {
+    if (table_stats.size() <= 2) {
+        // 对于两个表或更少，直接按基数排序
+        std::vector<std::pair<std::string, size_t>> sorted_stats = table_stats;
+        std::sort(sorted_stats.begin(), sorted_stats.end(),
+                  [](const auto &a, const auto &b) { return a.second < b.second; });
+
+        std::vector<std::string> result;
+        for (const auto &stat : sorted_stats) {
+            result.push_back(stat.first);
+        }
+        return result;
+    }
+
+    // 创建表名到基数的映射
+    std::unordered_map<std::string, size_t> cardinality_map;
+    for (const auto &stat : table_stats) {
+        cardinality_map[stat.first] = stat.second;
+    }
+
+    // 分析连接图：找出哪些表之间有连接条件
+    std::unordered_map<std::string, std::set<std::string>> join_graph;
+    for (const auto &cond : conditions) {
+        if (!cond.is_rhs_val) {  // 只考虑表间连接条件
+            join_graph[cond.lhs_col.tab_name].insert(cond.rhs_col.tab_name);
+            join_graph[cond.rhs_col.tab_name].insert(cond.lhs_col.tab_name);
+        }
+    }
+
+    std::vector<std::string> result;
+    std::set<std::string> used_tables;
+
+    // 第一步：找出基数最小的两个表作为起始点
+    std::vector<std::pair<std::string, size_t>> sorted_stats = table_stats;
+    std::sort(sorted_stats.begin(), sorted_stats.end(),
+              [](const auto &a, const auto &b) { return a.second < b.second; });
+
+    result.push_back(sorted_stats[0].first);
+    used_tables.insert(sorted_stats[0].first);
+
+    if (sorted_stats.size() > 1) {
+        result.push_back(sorted_stats[1].first);
+        used_tables.insert(sorted_stats[1].first);
+    }
+
+    // 第二步：贪心地添加剩余的表
+    while (used_tables.size() < table_stats.size()) {
+        std::string best_table;
+        size_t min_cost = SIZE_MAX;
+
+        for (const auto &stat : table_stats) {
+            const std::string &table = stat.first;
+            if (used_tables.count(table)) continue;  // 已经使用过的表
+
+            // 检查这个表是否与已选择的表有连接条件
+            bool has_join_condition = false;
+            for (const std::string &used_table : used_tables) {
+                if (join_graph[table].count(used_table)) {
+                    has_join_condition = true;
+                    break;
+                }
+            }
+
+            // 如果没有连接条件但还有其他表有连接条件，暂时跳过
+            if (!has_join_condition) {
+                bool other_tables_have_joins = false;
+                for (const auto &other_stat : table_stats) {
+                    if (used_tables.count(other_stat.first) || other_stat.first == table) continue;
+                    for (const std::string &used_table : used_tables) {
+                        if (join_graph[other_stat.first].count(used_table)) {
+                            other_tables_have_joins = true;
+                            break;
+                        }
+                    }
+                    if (other_tables_have_joins) break;
+                }
+                if (other_tables_have_joins) continue;
+            }
+
+            // 估算添加这个表的成本（简化版：直接使用表的基数）
+            size_t cost = cardinality_map[table];
+
+            if (cost < min_cost) {
+                min_cost = cost;
+                best_table = table;
+            }
+        }
+
+        if (!best_table.empty()) {
+            result.push_back(best_table);
+            used_tables.insert(best_table);
+        } else {
+            // 如果没有找到最佳表，选择剩余表中基数最小的
+            for (const auto &stat : sorted_stats) {
+                if (!used_tables.count(stat.first)) {
+                    result.push_back(stat.first);
+                    used_tables.insert(stat.first);
+                    break;
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 /**
