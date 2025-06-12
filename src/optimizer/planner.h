@@ -21,19 +21,19 @@ See the Mulan PSL v2 for more details. */
 #include <cassert>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
 
+#include "analyze/analyze.h"
+#include "common/common.h"
+#include "common/context.h"
 #include "execution/execution_defs.h"
 #include "execution/execution_manager.h"
+#include "parser/parser.h"
+#include "plan.h"
 #include "record/rm.h"
 #include "system/sm.h"
-#include "common/context.h"
-#include "plan.h"
-#include "parser/parser.h"
-#include "common/common.h"
-#include "analyze/analyze.h"
 
 /**
  * @class Planner
@@ -42,16 +42,15 @@ See the Mulan PSL v2 for more details. */
  *          实现了完整的查询优化流程，包括逻辑优化和物理优化两个阶段。
  *          支持多种连接算法的选择和索引优化策略。
  */
-class Planner
-{
-private:
-    SmManager *sm_manager_; ///< 系统管理器指针，提供元数据访问和表管理功能
+class Planner {
+   private:
+    SmManager *sm_manager_;  ///< 系统管理器指针，提供元数据访问和表管理功能
 
     // 连接算法控制标志
-    bool enable_nestedloop_join = true; ///< 是否启用嵌套循环连接算法，默认启用
-    bool enable_sortmerge_join = false; ///< 是否启用排序归并连接算法，默认禁用
+    bool enable_nestedloop_join = true;  ///< 是否启用嵌套循环连接算法，默认启用
+    bool enable_sortmerge_join = false;  ///< 是否启用排序归并连接算法，默认禁用
 
-public:
+   public:
     /**
      * @brief 构造函数
      * @param sm_manager 系统管理器指针，用于访问数据库元数据和表信息
@@ -84,7 +83,7 @@ public:
      */
     void set_enable_sortmerge_join(bool set_val) { enable_sortmerge_join = set_val; }
 
-private:
+   private:
     // ========== 查询优化核心函数 ==========
 
     /**
@@ -268,8 +267,7 @@ private:
      *          - SV_TYPE_STRING → TYPE_STRING (字符串类型)
      *          - 确保解析阶段和执行阶段类型系统的一致性
      */
-    ColType interp_sv_type(ast::SvType sv_type)
-    {
+    ColType interp_sv_type(ast::SvType sv_type) {
         std::map<ast::SvType, ColType> m = {
             {ast::SV_TYPE_INT, TYPE_INT}, {ast::SV_TYPE_FLOAT, TYPE_FLOAT}, {ast::SV_TYPE_STRING, TYPE_STRING}};
         return m.at(sv_type);
@@ -287,4 +285,11 @@ private:
      * @param plan 计划节点
      */
     void clear_conditions_from_plan(std::shared_ptr<Plan> plan);
+
+    /**
+     * @brief 从计划树中收集JOIN条件中涉及的列
+     * @param plan 计划节点
+     * @param join_columns 收集到的JOIN列集合（输出参数）
+     */
+    void collect_join_columns_from_plan(std::shared_ptr<Plan> plan, std::set<std::string> &join_columns);
 };

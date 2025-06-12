@@ -149,10 +149,11 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
 }
 
 std::shared_ptr<Query> Planner::logical_optimization(std::shared_ptr<Query> query, Context *context) {
-    // TODO: 实现三个逻辑优化规则
-    if (std::dynamic_pointer_cast<ast::SelectStmt>(query->parse)) {
+    // 只对SELECT语句执行逻辑优化
+    if (!std::dynamic_pointer_cast<ast::SelectStmt>(query->parse)) {
         return query;
     }
+
     // 1. 谓词下推 (Predicate Pushdown)
     query = predicate_pushdown(query);
 
@@ -835,11 +836,6 @@ std::shared_ptr<Query> Planner::join_order_optimization(std::shared_ptr<Query> q
             // 更精确的实现应该维护表的统计信息
             size_t estimated_cardinality = 1000;  // 默认估计值
 
-            // 可以通过以下方式获取更准确的基数：
-            // 1. 读取表的实际记录数（性能开销大）
-            // 2. 维护表的统计信息缓存
-            // 3. 使用直方图等高级统计方法
-
             table_stats.emplace_back(table_name, estimated_cardinality);
         } catch (...) {
             // 如果无法获取表信息，使用默认值
@@ -981,6 +977,9 @@ std::shared_ptr<Plan> Planner::apply_projection_pushdown(std::shared_ptr<Plan> p
         }
     }
 
+    // 添加JOIN条件中涉及的列（从计划树中收集）
+    collect_join_columns_from_plan(plan, needed_columns);
+
     // 对于多表连接，在相关Scan节点上方添加Project节点进行投影下推
     if (query->tables.size() > 1 && !query->is_select_star && query->cols.size() > 0) {
         plan = insert_project_nodes(plan, needed_columns, query->cols);
@@ -1039,9 +1038,47 @@ std::shared_ptr<Plan> Planner::insert_project_nodes(std::shared_ptr<Plan> plan,
         filter_plan->subplan_ = insert_project_nodes(filter_plan->subplan_, needed_columns, select_cols);
         return plan;
     } else if (auto scan_plan = std::dynamic_pointer_cast<ScanPlan>(plan)) {
-        // 对于Scan节点，在单表查询的情况下不需要额外的Project节点
-        // 因为根节点已经有Project节点了
-        // 只有在多表连接的情况下才需要为每个表添加Project节点进行投影下推
+        // 对于Scan节点，需要分析该表需要输出哪些列
+        // 收集该表相关的所有列
+        std::vector<TabCol> table_needed_cols;
+        std::string table_name = scan_plan->tab_name_;
+
+        // 从需要的列中筛选出属于当前表的列
+        for (const auto &needed_col : needed_columns) {
+            size_t dot_pos = needed_col.find('.');
+            if (dot_pos != std::string::npos) {
+                std::string tab_name = needed_col.substr(0, dot_pos);
+                std::string col_name = needed_col.substr(dot_pos + 1);
+
+                // 如果这一列属于当前表
+                if (tab_name == table_name) {
+                    TabCol tab_col;
+                    tab_col.tab_name = tab_name;
+                    tab_col.col_name = col_name;
+                    table_needed_cols.push_back(tab_col);
+                }
+            }
+        }
+
+        // 检查是否需要该表的所有列
+        // 如果需要的列数等于表的总列数，就不需要添加投影节点
+        if (!table_needed_cols.empty()) {
+            // 从系统管理器获取表的所有列
+            try {
+                const auto &all_table_cols = sm_manager_->db_.get_table(table_name).cols;
+
+                // 如果需要的列数等于表的总列数，说明需要所有列，不添加投影节点
+                if (table_needed_cols.size() == all_table_cols.size()) {
+                    return plan;  // 不添加投影节点
+                }
+
+                // 否则添加投影节点
+                return std::make_shared<ProjectionPlan>(T_Projection, plan, table_needed_cols);
+            } catch (const std::exception &e) {
+                // 如果获取表信息失败，仍然添加投影节点以保证安全性
+                return std::make_shared<ProjectionPlan>(T_Projection, plan, table_needed_cols);
+            }
+        }
 
         return plan;
     }
@@ -1163,6 +1200,37 @@ void Planner::clear_conditions_from_plan(std::shared_ptr<Plan> plan) {
         clear_conditions_from_plan(join_plan->left_);
         clear_conditions_from_plan(join_plan->right_);
     }
+}
+
+/**
+ * @brief 从计划树中收集JOIN条件中涉及的列
+ * @param plan 计划节点
+ * @param join_columns 收集到的JOIN列集合（输出参数）
+ */
+void Planner::collect_join_columns_from_plan(std::shared_ptr<Plan> plan, std::set<std::string> &join_columns) {
+    if (!plan)
+        return;
+
+    if (auto join_plan = std::dynamic_pointer_cast<JoinPlan>(plan)) {
+        // 收集当前JOIN节点的条件中涉及的列
+        for (const auto &cond : join_plan->conds_) {
+            join_columns.insert(cond.lhs_col.tab_name + "." + cond.lhs_col.col_name);
+            if (!cond.is_rhs_val) {
+                join_columns.insert(cond.rhs_col.tab_name + "." + cond.rhs_col.col_name);
+            }
+        }
+
+        // 递归处理子节点
+        collect_join_columns_from_plan(join_plan->left_, join_columns);
+        collect_join_columns_from_plan(join_plan->right_, join_columns);
+    } else if (auto proj_plan = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
+        // 递归处理ProjectionPlan的子节点
+        collect_join_columns_from_plan(proj_plan->subplan_, join_columns);
+    } else if (auto filter_plan = std::dynamic_pointer_cast<FilterPlan>(plan)) {
+        // 递归处理FilterPlan的子节点
+        collect_join_columns_from_plan(filter_plan->subplan_, join_columns);
+    }
+    // ScanPlan不包含JOIN条件，无需处理
 }
 
 /**

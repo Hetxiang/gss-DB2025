@@ -223,7 +223,18 @@ std::string ExplainExecutor::get_plan_name(std::shared_ptr<Plan> plan)
                         }
                         else if (cond.rhs_val.type == TYPE_FLOAT)
                         {
-                            condition_str += std::to_string(cond.rhs_val.float_val);
+                            // 检查浮点数是否实际上是整数值
+                            float float_val = cond.rhs_val.float_val;
+                            if (float_val == (int)float_val)
+                            {
+                                // 如果是整数值，按整数格式输出
+                                condition_str += std::to_string((int)float_val);
+                            }
+                            else
+                            {
+                                // 如果是真正的浮点数，保留浮点数格式
+                                condition_str += std::to_string(float_val);
+                            }
                         }
                         else if (cond.rhs_val.type == TYPE_STRING)
                         {
